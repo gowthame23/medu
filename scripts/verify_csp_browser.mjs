@@ -26,7 +26,12 @@ async function run() {
   // Give servers time to spin up
   await new Promise((r) => setTimeout(r, 6000));
 
-  const browser = await chromium.launch({ channel: "msedge", headless: true });
+  let browser;
+  try {
+    browser = await chromium.launch({ channel: "msedge", headless: true });
+  } catch {
+    browser = await chromium.launch({ headless: true });
+  }
   const context = await browser.newContext();
   const page = await context.newPage();
 

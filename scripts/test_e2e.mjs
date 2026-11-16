@@ -58,6 +58,60 @@ async function runE2E() {
     const context = await browser.newContext();
     const page = await context.newPage();
 
+    // CSP and Console Event Tracking across entire journey
+    const consoleLogs = [];
+    const ignoredConsoleErrors = [];
+    const unexpectedErrors = [];
+    const cspViolations = [];
+
+    // Inject securitypolicyviolation DOM listener
+    await page.addInitScript(() => {
+      window.__cspViolations = [];
+      document.addEventListener("securitypolicyviolation", (e) => {
+        window.__cspViolations.push({
+          blockedURI: e.blockedURI,
+          violatedDirective: e.violatedDirective,
+          originalPolicy: e.originalPolicy,
+          sourceFile: e.sourceFile,
+          lineNumber: e.lineNumber,
+        });
+      });
+    });
+
+    page.on("console", (msg) => {
+      const text = msg.text();
+      consoleLogs.push(`[${msg.type().toUpperCase()}] ${text}`);
+      if (msg.type() === "error") {
+        if (
+          text.includes("Content Security Policy") ||
+          text.includes("violates") ||
+          text.includes("CSP")
+        ) {
+          cspViolations.push(`Console CSP Error: ${text}`);
+        } else if (text.includes("401") || text.includes("Unauthorized")) {
+          // Expected: on initial unauthenticated mount, AuthContext invokes silent refresh
+          ignoredConsoleErrors.push({
+            message: text,
+            reason: "Expected unauthenticated 401 on initial mount before session cookie is established.",
+          });
+        } else {
+          unexpectedErrors.push(text);
+        }
+      }
+    });
+
+    page.on("pageerror", (err) => {
+      if (
+        err.message.includes("Content Security Policy") ||
+        err.message.includes("violates") ||
+        err.message.includes("CSP")
+      ) {
+        cspViolations.push(`PageError CSP: ${err.message}`);
+      } else {
+        unexpectedErrors.push(err.message);
+      }
+    });
+
     const testTimestamp = Date.now();
     const testEmail = `e2e_user_${testTimestamp}@test.com`;
     const testPassword = "Password123456!";
@@ -148,6 +202,34 @@ async function runE2E() {
     await page.click('button[title="Sign out"]');
     await page.waitForURL("http://localhost:3000/login", { timeout: 8000 });
     console.log("  -> Successfully signed out at end of scenario.");
+
+    // Retrieve any DOM securitypolicyviolation events captured
+    const domCspEvents = await page.evaluate(() => window.__cspViolations || []);
+    for (const evt of domCspEvents) {
+      cspViolations.push(
+        `DOM CSP Violation: directive=${evt.violatedDirective}, blockedURI=${evt.blockedURI}, file=${evt.sourceFile}:${evt.lineNumber}`
+      );
+    }
+
+    console.log("\n=== CSP & JOURNEY INTEGRITY AUDIT ===");
+    console.log(`Total Console Messages Captured: ${consoleLogs.length}`);
+    console.log(`Total Ignored Errors (Allowed): ${ignoredConsoleErrors.length}`);
+    ignoredConsoleErrors.forEach((item, idx) => {
+      console.log(`  [Ignored #${idx + 1}] "${item.message}" -> Reason: ${item.reason}`);
+    });
+    console.log(`Total Unexpected Errors: ${unexpectedErrors.length}`);
+    if (unexpectedErrors.length > 0) {
+      unexpectedErrors.forEach((e) => console.log(`  [Unexpected Error]: ${e}`));
+    }
+    console.log(`Total CSP Violations Detected: ${cspViolations.length}`);
+
+    if (cspViolations.length > 0) {
+      console.error("\n❌ CRITICAL: CSP VIOLATIONS DETECTED DURING USER JOURNEY:");
+      cspViolations.forEach((v) => console.error(`  - ${v}`));
+      throw new Error(`Test failed with ${cspViolations.length} CSP violation(s)`);
+    } else {
+      console.log("✅ ZERO CSP VIOLATIONS across entire end-to-end user journey!");
+    }
 
     console.log("\n==================================================");
     console.log("🎉 ALL E2E USER JOURNEY STEPS PASSED SUCCESSFULLY!");

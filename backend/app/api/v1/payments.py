@@ -224,16 +224,17 @@ async def payment_webhook(
         # In case of concurrent write lock contention (e.g. SQLite), retry ledger lookup briefly.
         import asyncio
         event_found = False
-        for _ in range(5):
+        for _ in range(10):
             try:
                 ledger_res = await db.execute(
                     select(PaymentEvent).where(PaymentEvent.event_id == event_id)
                 )
                 if ledger_res.scalar_one_or_none():
                     event_found = True
-                break
+                    break
             except OperationalError:
-                await asyncio.sleep(0.05)
+                pass
+            await asyncio.sleep(0.05)
 
         if event_found:
             return {"received": True, "status": "already_processed", "event_id": event_id}
