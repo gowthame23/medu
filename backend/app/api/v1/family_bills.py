@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Tuple, Optional
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -29,11 +29,13 @@ router = APIRouter(prefix="/families/{id}", tags=["Family Bills & Payments"])
 @router.get("/bills", response_model=List[UpcomingRadarResponse])
 async def list_family_bills(
     id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
     db: AsyncSession = Depends(get_db)
 ):
     service = BillService(db)
-    return await service.get_family_bills(id)
+    return await service.get_family_bills(id, limit=limit, offset=offset)
 
 
 @router.get("/bills/radar", response_model=List[UpcomingRadarResponse])
@@ -176,11 +178,13 @@ async def cancel_family_bill_payment(
 @router.get("/payments", response_model=List[PaymentHistoryItemResponse])
 async def list_family_payments(
     id: uuid.UUID,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
     db: AsyncSession = Depends(get_db)
 ):
     service = PaymentService(db)
-    rows = await service.payment_repo.get_family_payment_history(id)
+    rows = await service.payment_repo.get_family_payment_history(id, limit=limit, offset=offset)
     return [
         PaymentHistoryItemResponse(
             transaction_id=txn.id,

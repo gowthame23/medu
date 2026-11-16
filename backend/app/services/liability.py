@@ -178,8 +178,13 @@ class LiabilityService:
             commit=True
         )
 
-    async def get_loans(self, user_id: uuid.UUID) -> List[LoanResponse]:
-        loans = await self.liability_repo.get_loans(user_id)
+    async def get_loans(
+        self,
+        user_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[LoanResponse]:
+        loans = await self.liability_repo.get_loans(user_id, limit=limit, offset=offset)
         results = []
         for l in loans:
             rem = await self.liability_repo.get_remaining_principal(user_id, l.id)
@@ -212,6 +217,12 @@ class LiabilityService:
             raise ResourceNotFoundException("Loan", "Loan not found in private vault")
 
         current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+        if principal_paid > current_rem:
+            from app.core.errors import ValidationException
+            raise ValidationException(
+                f"Principal paid ({principal_paid}) cannot exceed remaining principal balance ({current_rem})",
+                code="PAYMENT_EXCEEDS_PRINCIPAL"
+            )
         new_rem = max(Decimal("0.00"), current_rem - principal_paid)
 
         payment = await self.liability_repo.add_payment(
@@ -242,6 +253,14 @@ class LiabilityService:
         loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
         if not loan:
             raise ResourceNotFoundException("Loan", "Loan not found in private vault")
+
+        current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+        if lump_sum_amount > current_rem:
+            from app.core.errors import ValidationException
+            raise ValidationException(
+                f"Prepayment amount ({lump_sum_amount}) cannot exceed remaining principal balance ({current_rem})",
+                code="PREPAYMENT_EXCEEDS_PRINCIPAL"
+            )
 
         prepayment = await self.liability_repo.add_prepayment(
             loan_id=loan.id,
@@ -364,6 +383,21 @@ class LiabilityService:
         loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
         if not loan:
             raise ResourceNotFoundException("Loan", "Loan not found in private vault")
+
+        if prepayment_month > loan.tenure_months:
+            from app.core.errors import ValidationException
+            raise ValidationException(
+                f"prepayment_month ({prepayment_month}) cannot exceed loan tenure ({loan.tenure_months} months)",
+                code="PREPAYMENT_MONTH_EXCEEDS_TENURE"
+            )
+
+        current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+        if prepayment_amount > current_rem:
+            from app.core.errors import ValidationException
+            raise ValidationException(
+                f"prepayment_amount ({prepayment_amount}) cannot exceed remaining principal balance ({current_rem})",
+                code="PREPAYMENT_EXCEEDS_PRINCIPAL"
+            )
 
         # Baseline schedule
         _, _, baseline_interest = generate_amortization_schedule(

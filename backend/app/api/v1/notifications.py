@@ -1,6 +1,6 @@
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -14,11 +14,13 @@ router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
 @router.get("", response_model=List[NotificationResponse])
 async def list_notifications(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     repo = NotificationRepository(db)
-    items = await repo.get_notifications(current_user.id)
+    items = await repo.get_notifications(current_user.id, limit=limit, offset=offset)
     return [NotificationResponse.model_validate(n) for n in items]
 
 

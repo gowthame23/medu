@@ -33,14 +33,21 @@ class NotificationRepository:
         await self.db.refresh(notif)
         return notif
 
-    async def get_notifications(self, user_id: uuid.UUID) -> List[Notification]:
+    async def get_notifications(
+        self,
+        user_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Notification]:
         query = (
             select(Notification)
             .where(Notification.user_id == user_id)
-            .order_by(Notification.created_at.desc())
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         result = await self.db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def mark_read(self, user_id: uuid.UUID, notification_id: uuid.UUID) -> bool:
         now = datetime.now(timezone.utc)

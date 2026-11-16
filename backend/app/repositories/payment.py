@@ -108,7 +108,12 @@ class PaymentRepository:
             await self.db.rollback()
             raise
 
-    async def get_family_payment_history(self, family_group_id: uuid.UUID) -> List[Tuple[PaymentTransaction, str]]:
+    async def get_family_payment_history(
+        self,
+        family_group_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[Tuple[PaymentTransaction, str]]:
         """Returns list of (PaymentTransaction, bill_title) for family group."""
         query = (
             select(PaymentTransaction, UpcomingRadar.title)
@@ -117,7 +122,9 @@ class PaymentRepository:
                 UpcomingRadar.family_group_id == family_group_id,
                 PaymentTransaction.status == "SUCCESS"
             )
-            .order_by(PaymentTransaction.created_at.desc())
+            .order_by(PaymentTransaction.created_at.desc(), PaymentTransaction.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         result = await self.db.execute(query)
-        return result.all()
+        return list(result.all())

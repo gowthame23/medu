@@ -38,7 +38,12 @@ class LiabilityRepository:
         await self.db.refresh(loan)
         return loan
 
-    async def get_loans(self, user_id: uuid.UUID) -> List[LiabilitiesVault]:
+    async def get_loans(
+        self,
+        user_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[LiabilitiesVault]:
         """Strictly filtered by acting user_id."""
         query = (
             select(LiabilitiesVault)
@@ -46,10 +51,12 @@ class LiabilityRepository:
                 LiabilitiesVault.user_id == user_id,
                 LiabilitiesVault.deleted_at.is_(None)
             )
-            .order_by(LiabilitiesVault.created_at.desc())
+            .order_by(LiabilitiesVault.created_at.desc(), LiabilitiesVault.id.desc())
+            .limit(limit)
+            .offset(offset)
         )
         result = await self.db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def get_loan_by_id(self, user_id: uuid.UUID, loan_id: uuid.UUID) -> Optional[LiabilitiesVault]:
         """Strictly filtered by (loan_id, user_id). Never returns another user's loan."""

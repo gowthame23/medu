@@ -1,6 +1,6 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -22,11 +22,13 @@ router = APIRouter(prefix="/bills", tags=["Personal Bills"])
 
 @router.get("", response_model=List[UpcomingRadarResponse])
 async def list_personal_bills(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = BillService(db)
-    return await service.get_personal_bills(current_user.id)
+    return await service.get_personal_bills(current_user.id, limit=limit, offset=offset)
 
 
 @router.get("/radar", response_model=List[UpcomingRadarResponse])

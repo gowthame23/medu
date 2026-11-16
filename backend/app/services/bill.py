@@ -73,8 +73,13 @@ class BillService:
         )
         return await self._enrich_bill_response(bill)
 
-    async def get_personal_bills(self, user_id: uuid.UUID) -> List[UpcomingRadarResponse]:
-        bills = await self.bill_repo.get_personal_bills(user_id)
+    async def get_personal_bills(
+        self,
+        user_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[UpcomingRadarResponse]:
+        bills = await self.bill_repo.get_personal_bills(user_id, limit=limit, offset=offset)
         return [await self._enrich_bill_response(b) for b in bills]
 
     async def get_personal_bill(self, user_id: uuid.UUID, bill_id: uuid.UUID) -> UpcomingRadarDetailResponse:
@@ -126,8 +131,13 @@ class BillService:
         )
         return await self._enrich_bill_response(bill)
 
-    async def get_family_bills(self, family_group_id: uuid.UUID) -> List[UpcomingRadarResponse]:
-        bills = await self.bill_repo.get_family_bills(family_group_id)
+    async def get_family_bills(
+        self,
+        family_group_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[UpcomingRadarResponse]:
+        bills = await self.bill_repo.get_family_bills(family_group_id, limit=limit, offset=offset)
         return [await self._enrich_bill_response(b) for b in bills]
 
     async def get_family_bill(self, family_group_id: uuid.UUID, bill_id: uuid.UUID) -> UpcomingRadarDetailResponse:

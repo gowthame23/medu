@@ -46,6 +46,13 @@ async def get_daily_logs_range(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    if start_date > end_date:
+        from app.core.errors import ValidationException
+        raise ValidationException("start_date must be less than or equal to end_date", code="INVALID_DATE_RANGE")
+    if (end_date - start_date).days > 366:
+        from app.core.errors import ValidationException
+        raise ValidationException("Date range cannot exceed 366 days", code="DATE_RANGE_TOO_LARGE")
+
     service = ExpenseService(db)
     return await service.get_daily_logs_range(current_user.id, start_date, end_date)
 

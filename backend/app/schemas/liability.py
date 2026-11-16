@@ -14,6 +14,15 @@ class LoanCreateRequest(StrictBaseModel):
     tenure_months: int = Field(gt=0, le=600)  # Bounded to at most 600 months (50 years)
     start_date: Optional[date] = None
 
+    @field_validator("principal_amount")
+    @classmethod
+    def validate_principal(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("principal_amount must be greater than zero.")
+        if v > Decimal("1000000000.00"):
+            raise ValueError("principal_amount cannot exceed 1,000,000,000.00.")
+        return v
+
     @field_validator("interest_rate")
     @classmethod
     def validate_rate(cls, v: Decimal) -> Decimal:
@@ -46,6 +55,20 @@ class LoanPaymentCreateRequest(StrictBaseModel):
     principal_paid: Money
     interest_paid: Money
 
+    @field_validator("principal_paid")
+    @classmethod
+    def validate_principal_paid(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("principal_paid must be greater than zero.")
+        return v
+
+    @field_validator("interest_paid")
+    @classmethod
+    def validate_interest_paid(cls, v: Decimal) -> Decimal:
+        if v < Decimal("0"):
+            raise ValueError("interest_paid cannot be negative.")
+        return v
+
 
 class LoanPaymentResponse(StrictBaseModel):
     id: uuid.UUID
@@ -61,6 +84,13 @@ class LoanPrepaymentCreateRequest(StrictBaseModel):
     prepayment_date: date
     lump_sum_amount: Money
     effect: str = "REDUCE_TENURE"  # REDUCE_TENURE or REDUCE_EMI
+
+    @field_validator("lump_sum_amount")
+    @classmethod
+    def validate_lump_sum(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("lump_sum_amount must be greater than zero.")
+        return v
 
 
 class LoanPrepaymentResponse(StrictBaseModel):
@@ -104,6 +134,13 @@ class PrepaymentSimulateRequest(StrictBaseModel):
     prepayment_amount: Money
     prepayment_month: int = Field(ge=1)
     effect: str = "REDUCE_TENURE"  # REDUCE_TENURE or REDUCE_EMI
+
+    @field_validator("prepayment_amount")
+    @classmethod
+    def validate_prepayment(cls, v: Decimal) -> Decimal:
+        if v <= Decimal("0"):
+            raise ValueError("prepayment_amount must be greater than zero.")
+        return v
 
 
 class PrepaymentSimulateResponse(StrictBaseModel):

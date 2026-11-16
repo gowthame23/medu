@@ -92,3 +92,12 @@ class UnprocessableFinancialEntityException(MendAppException):
             code="INVALID_FINANCIAL_FORMAT",
             message=message,
         )
+
+
+class ValidationException(MendAppException):
+    def __init__(self, message: str, code: str = "VALIDATION_ERROR"):
+        super().__init__(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            code=code,
+            message=message,
+        )

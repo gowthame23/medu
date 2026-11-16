@@ -1,6 +1,6 @@
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -27,11 +27,13 @@ router = APIRouter(prefix="/loans", tags=["Liabilities Vault (100% Private)"])
 
 @router.get("", response_model=List[LoanResponse])
 async def list_loans(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = LiabilityService(db)
-    return await service.get_loans(current_user.id)
+    return await service.get_loans(current_user.id, limit=limit, offset=offset)
 
 
 @router.post("", response_model=LoanResponse, status_code=status.HTTP_201_CREATED)

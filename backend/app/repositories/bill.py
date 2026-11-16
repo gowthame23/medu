@@ -79,17 +79,24 @@ class BillRepository:
         await self.db.refresh(bill)
         return bill
 
-    async def get_personal_bills(self, user_id: uuid.UUID) -> List[UpcomingRadar]:
+    async def get_personal_bills(
+        self,
+        user_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[UpcomingRadar]:
         query = (
             select(UpcomingRadar)
             .where(
                 UpcomingRadar.user_id == user_id,
                 UpcomingRadar.deleted_at.is_(None)
             )
-            .order_by(UpcomingRadar.due_date.asc())
+            .order_by(UpcomingRadar.due_date.asc(), UpcomingRadar.id.asc())
+            .limit(limit)
+            .offset(offset)
         )
         result = await self.db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def get_personal_radar(self, user_id: uuid.UUID, horizon_days: int = 7) -> List[UpcomingRadar]:
         from datetime import timedelta
@@ -116,17 +123,24 @@ class BillRepository:
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_family_bills(self, family_group_id: uuid.UUID) -> List[UpcomingRadar]:
+    async def get_family_bills(
+        self,
+        family_group_id: uuid.UUID,
+        limit: int = 50,
+        offset: int = 0
+    ) -> List[UpcomingRadar]:
         query = (
             select(UpcomingRadar)
             .where(
                 UpcomingRadar.family_group_id == family_group_id,
                 UpcomingRadar.deleted_at.is_(None)
             )
-            .order_by(UpcomingRadar.due_date.asc())
+            .order_by(UpcomingRadar.due_date.asc(), UpcomingRadar.id.asc())
+            .limit(limit)
+            .offset(offset)
         )
         result = await self.db.execute(query)
-        return result.scalars().all()
+        return list(result.scalars().all())
 
     async def get_family_radar(self, family_group_id: uuid.UUID, horizon_days: int = 7) -> List[UpcomingRadar]:
         from datetime import timedelta
