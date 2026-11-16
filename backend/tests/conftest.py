@@ -65,6 +65,19 @@ def event_loop():
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_test_db():
+    from app.core.rate_limit import (
+        login_rate_limiter,
+        register_rate_limiter,
+        refresh_rate_limiter,
+        invitation_accept_rate_limiter,
+        verification_rate_limiter,
+    )
+    login_rate_limiter._requests.clear()
+    register_rate_limiter._requests.clear()
+    refresh_rate_limiter._requests.clear()
+    invitation_accept_rate_limiter._requests.clear()
+    verification_rate_limiter._requests.clear()
+
     async with test_async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)

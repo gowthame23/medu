@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import OperationalError
 
 from app.core.config import settings
 from app.core.errors import (
@@ -151,43 +152,48 @@ class VerificationService:
             )
             raise InvalidOrExpiredCodeException()
 
-        expected_hash = hash_verification_code(str(challenge.id), code.strip())
-        if not secrets.compare_digest(challenge.code_hash, expected_hash):
-            challenge.attempts += 1
-            if challenge.attempts >= challenge.max_attempts:
-                await self.audit_repo.log_action(
-                    action="VERIFICATION_LOCKED",
-                    entity_type="VERIFICATION",
-                    entity_id=str(challenge.id),
-                    user_id=user.id,
-                    metadata_json={"channel": "email", "attempts": challenge.attempts},
-                    ip_address=ip_address,
-                    commit=True
-                )
-            else:
-                await self.audit_repo.log_action(
-                    action="VERIFICATION_FAILED",
-                    entity_type="VERIFICATION",
-                    entity_id=str(challenge.id),
-                    user_id=user.id,
-                    metadata_json={"channel": "email", "attempts": challenge.attempts},
-                    ip_address=ip_address,
-                    commit=True
-                )
-            raise InvalidOrExpiredCodeException()
+        try:
+            expected_hash = hash_verification_code(str(challenge.id), code.strip())
+            if not secrets.compare_digest(challenge.code_hash, expected_hash):
+                challenge.attempts += 1
+                if challenge.attempts >= challenge.max_attempts:
+                    await self.audit_repo.log_action(
+                        action="VERIFICATION_LOCKED",
+                        entity_type="VERIFICATION",
+                        entity_id=str(challenge.id),
+                        user_id=user.id,
+                        metadata_json={"channel": "email", "attempts": challenge.attempts},
+                        ip_address=ip_address,
+                        commit=True
+                    )
+                else:
+                    await self.audit_repo.log_action(
+                        action="VERIFICATION_FAILED",
+                        entity_type="VERIFICATION",
+                        entity_id=str(challenge.id),
+                        user_id=user.id,
+                        metadata_json={"channel": "email", "attempts": challenge.attempts},
+                        ip_address=ip_address,
+                        commit=True
+                    )
+                raise InvalidOrExpiredCodeException()
 
-        # Success
-        challenge.consumed_at = now
-        user.email_verified_at = now
-        await self.audit_repo.log_action(
-            action="VERIFICATION_CONFIRMED",
-            entity_type="VERIFICATION",
-            entity_id=str(challenge.id),
-            user_id=user.id,
-            metadata_json={"channel": "email"},
-            ip_address=ip_address,
-            commit=True
-        )
+            # Success
+            challenge.consumed_at = now
+            user.email_verified_at = now
+            await self.audit_repo.log_action(
+                action="VERIFICATION_CONFIRMED",
+                entity_type="VERIFICATION",
+                entity_id=str(challenge.id),
+                user_id=user.id,
+                metadata_json={"channel": "email"},
+                ip_address=ip_address,
+                commit=False
+            )
+            await self.db.commit()
+        except OperationalError:
+            await self.db.rollback()
+            raise InvalidOrExpiredCodeException()
 
         return VerificationConfirmResponse(channel="email")
 
@@ -297,42 +303,47 @@ class VerificationService:
             )
             raise InvalidOrExpiredCodeException()
 
-        expected_hash = hash_verification_code(str(challenge.id), code.strip())
-        if not secrets.compare_digest(challenge.code_hash, expected_hash):
-            challenge.attempts += 1
-            if challenge.attempts >= challenge.max_attempts:
-                await self.audit_repo.log_action(
-                    action="VERIFICATION_LOCKED",
-                    entity_type="VERIFICATION",
-                    entity_id=str(challenge.id),
-                    user_id=user.id,
-                    metadata_json={"channel": "phone", "attempts": challenge.attempts},
-                    ip_address=ip_address,
-                    commit=True
-                )
-            else:
-                await self.audit_repo.log_action(
-                    action="VERIFICATION_FAILED",
-                    entity_type="VERIFICATION",
-                    entity_id=str(challenge.id),
-                    user_id=user.id,
-                    metadata_json={"channel": "phone", "attempts": challenge.attempts},
-                    ip_address=ip_address,
-                    commit=True
-                )
-            raise InvalidOrExpiredCodeException()
+        try:
+            expected_hash = hash_verification_code(str(challenge.id), code.strip())
+            if not secrets.compare_digest(challenge.code_hash, expected_hash):
+                challenge.attempts += 1
+                if challenge.attempts >= challenge.max_attempts:
+                    await self.audit_repo.log_action(
+                        action="VERIFICATION_LOCKED",
+                        entity_type="VERIFICATION",
+                        entity_id=str(challenge.id),
+                        user_id=user.id,
+                        metadata_json={"channel": "phone", "attempts": challenge.attempts},
+                        ip_address=ip_address,
+                        commit=True
+                    )
+                else:
+                    await self.audit_repo.log_action(
+                        action="VERIFICATION_FAILED",
+                        entity_type="VERIFICATION",
+                        entity_id=str(challenge.id),
+                        user_id=user.id,
+                        metadata_json={"channel": "phone", "attempts": challenge.attempts},
+                        ip_address=ip_address,
+                        commit=True
+                    )
+                raise InvalidOrExpiredCodeException()
 
-        # Success
-        challenge.consumed_at = now
-        user.phone_verified_at = now
-        await self.audit_repo.log_action(
-            action="VERIFICATION_CONFIRMED",
-            entity_type="VERIFICATION",
-            entity_id=str(challenge.id),
-            user_id=user.id,
-            metadata_json={"channel": "phone"},
-            ip_address=ip_address,
-            commit=True
-        )
+            # Success
+            challenge.consumed_at = now
+            user.phone_verified_at = now
+            await self.audit_repo.log_action(
+                action="VERIFICATION_CONFIRMED",
+                entity_type="VERIFICATION",
+                entity_id=str(challenge.id),
+                user_id=user.id,
+                metadata_json={"channel": "phone"},
+                ip_address=ip_address,
+                commit=False
+            )
+            await self.db.commit()
+        except OperationalError:
+            await self.db.rollback()
+            raise InvalidOrExpiredCodeException()
 
         return VerificationConfirmResponse(channel="phone")
