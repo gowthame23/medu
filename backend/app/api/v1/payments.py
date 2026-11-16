@@ -86,7 +86,26 @@ async def payment_webhook(
         return {"received": True, "status": "transaction_not_found"}
 
     # 3. Cryptographic & Business Amount Integrity Check
-    if "amount" in payload and payload["amount"] is not None:
+    if event_type == "payment.success":
+        if "amount" not in payload or payload["amount"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing required amount in payment.success webhook payload"
+            )
+        try:
+            from decimal import Decimal, InvalidOperation
+            webhook_amount = Decimal(str(payload["amount"]))
+            if webhook_amount != txn.amount:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Amount mismatch: expected {txn.amount}, received {webhook_amount}"
+                )
+        except (InvalidOperation, TypeError):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid amount in webhook payload"
+            )
+    elif "amount" in payload and payload["amount"] is not None:
         try:
             from decimal import Decimal, InvalidOperation
             webhook_amount = Decimal(str(payload["amount"]))
@@ -201,6 +220,27 @@ async def payment_webhook(
 
     except (IntegrityError, OperationalError):
         await db.rollback()
-        return {"received": True, "status": "already_processed", "event_id": event_id}
+        # Only a confirmed duplicate event_id in the ledger returns 200 already_processed.
+        # In case of concurrent write lock contention (e.g. SQLite), retry ledger lookup briefly.
+        import asyncio
+        event_found = False
+        for _ in range(5):
+            try:
+                ledger_res = await db.execute(
+                    select(PaymentEvent).where(PaymentEvent.event_id == event_id)
+                )
+                if ledger_res.scalar_one_or_none():
+                    event_found = True
+                break
+            except OperationalError:
+                await asyncio.sleep(0.05)
+
+        if event_found:
+            return {"received": True, "status": "already_processed", "event_id": event_id}
+
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database error processing webhook event. Gateway retry requested."
+        )
 
     return {"received": True, "event_id": event_id, "status": "processed"}

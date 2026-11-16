@@ -440,3 +440,149 @@ async def test_simultaneous_webhook_deliveries_handled_gracefully(client: AsyncC
     # Exactly one processes the event, and the other receives already_processed deduplication
     assert "processed" in statuses
     assert "already_processed" in statuses
+
+
+@pytest.mark.asyncio
+async def test_webhook_operational_error_returns_5xx_and_leaves_transaction_pending(client: AsyncClient, create_user_fixture):
+    import uuid
+    import time
+    import json
+    import hmac
+    import hashlib
+    from unittest.mock import patch
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from app.core.config import settings
+    from app.repositories.payment import PaymentRepository
+    from backend.tests.conftest import TestAsyncSessionLocal
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models.payment import PaymentTransaction
+
+    user, token = await create_user_fixture("wh_err@test.com", "WH Err User")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Create bill
+    bill_res = await client.post(
+        "/api/v1/bills",
+        json={"title": "Error Webhook Bill", "amount": "750.00", "due_date": "2026-12-05"},
+        headers=headers
+    )
+    bill_id = bill_res.json()["id"]
+
+    # 2. Create pending transaction
+    async with TestAsyncSessionLocal() as session:
+        repo = PaymentRepository(session)
+        txn = await repo.create_pending_transaction(
+            bill_id=uuid.UUID(bill_id),
+            idempotency_key="wh_err_key",
+            amount=Decimal("750.00"),
+            paid_by_user_id=user.id,
+            paid_by_display_name="WH Err User",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+        txn_id = str(txn.id)
+
+    # 3. Webhook payload
+    evt_id = f"evt_err_{uuid.uuid4().hex}"
+    wh_payload = {
+        "event_id": evt_id,
+        "event_type": "payment.success",
+        "transaction_id": txn_id,
+        "amount": "750.00",
+        "payment_reference": "WH_ERR_REF"
+    }
+    payload_bytes = json.dumps(wh_payload).encode("utf-8")
+    ts = str(int(time.time()))
+    sig = hmac.new(settings.WEBHOOK_SECRET.encode("utf-8"), f"{ts}.".encode("utf-8") + payload_bytes, hashlib.sha256).hexdigest()
+    wh_headers = {"X-Signature": sig, "X-Timestamp": ts, "Content-Type": "application/json"}
+
+    # Mock commit to raise OperationalError during webhook processing
+    original_commit = AsyncSession.commit
+    async def mock_commit_fail(self):
+        raise OperationalError("Simulated database connection loss", None, None)
+
+    with patch.object(AsyncSession, "commit", mock_commit_fail):
+        res = await client.post("/api/v1/payments/webhook", content=payload_bytes, headers=wh_headers)
+        assert res.status_code == 503
+        assert "Database error" in res.json()["error"]["message"]
+
+    # 4. Verify transaction stays PENDING and bill stays UNPAID
+    async with TestAsyncSessionLocal() as session:
+        txn_check = await session.execute(
+            select(PaymentTransaction).where(PaymentTransaction.id == uuid.UUID(txn_id))
+        )
+        t = txn_check.scalar_one()
+        assert t.status == "PENDING"
+
+    bill_check = await client.get(f"/api/v1/bills/{bill_id}", headers=headers)
+    assert bill_check.json()["is_paid"] is False
+    assert bill_check.json()["bill_status"] == "UNPAID"
+
+
+@pytest.mark.asyncio
+async def test_webhook_payment_success_without_amount_returns_400_and_changes_nothing(client: AsyncClient, create_user_fixture):
+    import uuid
+    import time
+    import json
+    import hmac
+    import hashlib
+    from app.core.config import settings
+    from app.repositories.payment import PaymentRepository
+    from backend.tests.conftest import TestAsyncSessionLocal
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal
+    from sqlalchemy import select
+    from app.models.payment import PaymentTransaction
+
+    user, token = await create_user_fixture("no_amt@test.com", "No Amt User")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Create bill
+    bill_res = await client.post(
+        "/api/v1/bills",
+        json={"title": "No Amount Bill", "amount": "600.00", "due_date": "2026-12-08"},
+        headers=headers
+    )
+    bill_id = bill_res.json()["id"]
+
+    # 2. Create pending transaction
+    async with TestAsyncSessionLocal() as session:
+        repo = PaymentRepository(session)
+        txn = await repo.create_pending_transaction(
+            bill_id=uuid.UUID(bill_id),
+            idempotency_key="wh_no_amt_key",
+            amount=Decimal("600.00"),
+            paid_by_user_id=user.id,
+            paid_by_display_name="No Amt User",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+        txn_id = str(txn.id)
+
+    # 3. Payload without amount (missing amount)
+    wh_payload = {
+        "event_id": f"evt_no_amt_{uuid.uuid4().hex}",
+        "event_type": "payment.success",
+        "transaction_id": txn_id,
+        "payment_reference": "WH_NO_AMT"
+    }
+    payload_bytes = json.dumps(wh_payload).encode("utf-8")
+    ts = str(int(time.time()))
+    sig = hmac.new(settings.WEBHOOK_SECRET.encode("utf-8"), f"{ts}.".encode("utf-8") + payload_bytes, hashlib.sha256).hexdigest()
+    wh_headers = {"X-Signature": sig, "X-Timestamp": ts, "Content-Type": "application/json"}
+
+    res = await client.post("/api/v1/payments/webhook", content=payload_bytes, headers=wh_headers)
+    assert res.status_code == 400
+    assert "Missing required amount" in res.json()["error"]["message"]
+
+    # 4. Transaction stays PENDING and bill stays unpaid
+    async with TestAsyncSessionLocal() as session:
+        txn_check = await session.execute(
+            select(PaymentTransaction).where(PaymentTransaction.id == uuid.UUID(txn_id))
+        )
+        t = txn_check.scalar_one()
+        assert t.status == "PENDING"
+
+    bill_check = await client.get(f"/api/v1/bills/{bill_id}", headers=headers)
+    assert bill_check.json()["is_paid"] is False

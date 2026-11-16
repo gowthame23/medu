@@ -1,16 +1,17 @@
-# TASK.md — Round 2 (written by Claude Code; rewritten every round)
+# TASK.md — Round 3 (written by Claude Code; fully replaced every round)
 
 Implementer: Antigravity. Reviewer/commander: Claude Code.
-When done, OVERWRITE `REPORT.md` (delete the old content, write the new report). Keep exactly one file named `REPORT.md` (uppercase); delete any `report.md` duplicate.
+When done, OVERWRITE `REPORT.md` (delete the old content, write the new report). Exactly one file named `REPORT.md`.
 
 ## Rules
-1. Read `AGENTS.md` first. This Next.js version has breaking changes: read the relevant guide in `node_modules/next/dist/docs/` before changing Next.js code.
+1. Read `AGENTS.md` first. This Next.js version has breaking changes: read `node_modules/next/dist/docs/` before changing Next.js code.
 2. Do NOT edit `TASK.md` or `session.md`. Claude Code owns them.
 3. Work the items in order. After each item run the global checks. If a check fails and you cannot fix it, STOP and record it in `REPORT.md`.
 4. Architecture: routers -> services -> repositories; money is Decimal in Python and strings in JSON/TS; outsiders get 404.
-5. Commit after each passing item on `consolidate-fastapi`: `task(N): <title>`. Never commit a failing state. Do not push unless the user says so.
-6. No claims without evidence. Paste the REAL output of every command. Write "NOT RUN" with the reason for anything you could not run. Do not write "0 warnings" or "clean" unless the output shows it.
-7. Do not add features that are not listed here. If something is ambiguous, write the question in `REPORT.md` and stop.
+5. Commit after each passing item on `consolidate-fastapi`: `task(N): <title>`. Never commit a failing state. Do NOT push; the user pushes.
+6. No claims without evidence. Paste REAL command output. Write "NOT RUN" plus the reason for anything you could not run. Run `git status --short` at the end and paste it.
+7. Do not add features not listed. If ambiguous, write the question in `REPORT.md` and stop.
+8. Never edit an applied Alembic migration. Schema changes are NEW revisions only.
 
 ## Global checks (after every item)
 ```
@@ -22,36 +23,44 @@ npm run build
 
 ## Items
 
-### 1. Production CSP must not break the app (highest risk)
-`script-src 'self'` with no `'unsafe-inline'` in production will block Next.js's inline hydration/bootstrap scripts unless nonces or hashes are used. Verify it, do not assume.
-- Run `npm run build && npm run start`, open `/login` and `/register` in a headless browser (Playwright), and capture console errors. Report any CSP violation verbatim.
-- If scripts are blocked, implement nonce-based CSP the way this Next.js version documents it (read `node_modules/next/dist/docs/` for the current mechanism; in Next 16 this may be `proxy.ts` instead of `middleware.ts`). Dev may keep `unsafe-eval` only when `NODE_ENV !== 'production'`.
-- Done when: the production build loads `/login`, a user can log in, and the browser console shows zero CSP violations. Paste the evidence.
-- Also make the HSTS value in `next.config.ts` match what REPORT.md says (report said 31536000; the file had 63072000 with `preload`). Remove `preload` unless the user says they will submit the domain.
+### 1. Webhook error handling must not lose payments
+In `backend/app/api/v1/payments.py` the final `except (IntegrityError, OperationalError)` returns 200 `already_processed` for ANY database error. A transient DB failure (deadlock, lost connection) would be acknowledged to the gateway, which then never retries, so a real payment is lost.
+- Only a unique-violation on `event_id` may return `already_processed` (after rollback, re-query the ledger for that `event_id` to confirm it exists). Any other `IntegrityError` or `OperationalError` must roll back and return 5xx (503 is fine) so the gateway retries. Never swallow unexpected exceptions.
+- `payment.success` must REQUIRE `amount`; a missing/null amount returns 400. Keep the mismatch check.
+- Tests: (a) simulated `OperationalError` during commit returns 5xx and the transaction stays `PENDING`; (b) `payment.success` without amount returns 400 and changes nothing; (c) a real duplicate `event_id` still returns `already_processed`.
 
-### 2. Webhook state machine hardening
-In `backend/app/api/v1/payments.py`:
-- A webhook may only move a transaction from `PENDING` to `SUCCESS`/`FAILED`. Ignore (and record in the ledger) `payment.success` for a transaction that is already `FAILED`/cancelled, or when the bill is already `PAID`/`PAID_UNVERIFIED`. Never create a second active transaction on the same bill (the partial unique index would 500).
-- Webhook on a cancelled payment must not mark the bill paid. Write that test.
-- The Origin-check exemption must be the exact path `/api/v1/payments/webhook`, not any path ending in `/webhook`.
-- Two simultaneous deliveries of the same `event_id` must produce one transition and one `already_processed`; handle the unique-constraint `IntegrityError` by returning `already_processed` rather than 500. Add a test.
-- Webhook signing secret must come only from settings; confirm production startup fails with the default secret (test exists, keep it).
+### 2. CSP must be asserted across the whole real user flow
+Round 2 proved zero CSP violations only on `/login`, `/register` and one redirect. `scripts/test_e2e.mjs` does not check CSP at all.
+- In `scripts/test_e2e.mjs`, listen to `page.on('console')`, `page.on('pageerror')` and a `securitypolicyviolation` event listener injected with `page.addInitScript`. FAIL the test on any CSP violation anywhere in the journey (register, dashboard, add bill, open pay sheet, pay, logout, login).
+- Ignore only the expected unauthenticated 401s from silent refresh; list exactly which console messages are ignored and why.
+- `scripts/verify_csp_browser.mjs` hardcodes `channel: "msedge"`; use the same Edge-then-Chromium fallback as `test_e2e.mjs`.
+- Next warned that it ignored a lockfile outside the repo (`C:\Users\gowth\package-lock.json`). Set `turbopack.root` in `next.config.ts` to the repo root so the warning disappears. Do not delete the user's file outside the repo.
 
-### 3. Real end-to-end test (replace the fake "smoke test")
-`scripts/smoke_test.mjs` only greps source files. Rename it `scripts/static_checks.mjs` and describe it honestly as a static check.
-Add a real Playwright test: register -> login -> dashboard renders -> add a personal bill -> pay it (sandbox) -> bill shows paid/unverified state with attribution -> logout. Script `npm run test:e2e`; it must start the backend (SQLite is fine locally) and the frontend itself. Add it to CI with the Postgres service.
+### 3. Real Postgres proof without Docker
+Docker is not installed here, but the suite still has never run on Postgres. Get a real Postgres on this Windows machine by any method that does not need Docker (for example portable PostgreSQL binaries from the official zip, or the `pgserver` pip package installed in a throwaway venv; do NOT add it to `requirements.txt`).
+- Run the whole suite with `TEST_DATABASE_URL=postgresql+asyncpg://...` and paste the full output, including that `test_postgres_concurrent_payment_race_condition` ran (not skipped).
+- Run `alembic upgrade head` on the empty Postgres database and paste it.
+- If it truly cannot be done, write NOT RUN with the exact errors you hit.
+- Also change CI triggers so the pipeline runs on every push and on `workflow_dispatch` (currently only pushes to main/master, so this branch would never run CI).
 
-### 4. Postgres and Docker proof (be honest if you cannot run)
-- Docker is not installed on the reviewer machine. If it is on yours: run `docker compose config`, then `docker compose up --build`, and paste `docker compose ps`, `curl http://localhost:8000/health` and a login through `http://localhost:3000`.
-- Check `docker-compose.yml` line `DEBUG: ${DEBUG:-"false"}`: the default may include literal quote characters and fail pydantic bool parsing. Fix it to `${DEBUG:-false}` and confirm with `docker compose config`.
-- If you can run Postgres (Docker or local): run the full pytest suite with `TEST_DATABASE_URL=postgresql+asyncpg://...` and paste the result.
-- The concurrency test passes on SQLite, which ignores `FOR UPDATE`, so it does not prove locking. Mark it with a clear note and add a Postgres-only version (`pytest.mark.skipif` on SQLite) that really races two requests. If Postgres is unavailable, write "NOT RUN" with the reason; CI will be the proof.
+### 4. Reproducible dependencies
+`backend/requirements.txt` uses `>=` for everything and includes test tools.
+- Pin exact versions of the currently passing environment in `backend/requirements.txt` (runtime only) and move pytest, pytest-asyncio and httpx into `backend/requirements-dev.txt`.
+- Update CI and README to install both. Keep the Dockerfile on runtime only.
+- Confirm the full suite still passes from a fresh virtual environment built from these files. Paste the output.
 
-### 5. Documentation truth pass
-Read `README.md`, `SECURITY.md` and `REPORT.md` line by line against the code. Remove or correct anything not implemented or not tested. State limits explicitly: in-memory per-process rate limiter, sandbox payment provider only, no real BBPS/UPI integration, no email verification, no password reset, self-reported payments are unverified. Include exact commands for backend tests, frontend checks, e2e and docker.
+### 5. Audit log must actually be written
+`AuditRepository` exists but nothing calls it, so any "audit trail" claim is false.
+- Write audit entries for: login success/failure (never the password; record email hash or user id, not the raw failed-email string if unknown), refresh-token reuse detection, change-password, logout-all, invitation create/accept, member role change/removal, `mark-paid`, payment success/failure/cancel, webhook processed/ignored.
+- Never put passwords, tokens, full consumer numbers, loan names/amounts or any loan detail in audit metadata. Use ids only. Use the same trusted-proxy-aware client IP as the rate limiter.
+- Tests: entries are written for each category above; a redaction test proves no secrets/loan data appear in any audit row after a full user journey.
+- If an event cannot be wired in this round, say so in `REPORT.md` and keep the docs from claiming it.
 
-### 6. Housekeeping
-- One `REPORT.md` only. The previous report claimed "Working tree clean" while `report.md` was untracked: do not repeat that. Run `git status --short` at the end and paste it.
+### 6. Migration discipline
+The baseline migration `0fa0163424e7` was edited in place in earlier rounds (it now contains `event_id` and `anchor_day`). Any database created from the older version would be wrong.
+- Do not edit it again.
+- Add a test that runs `alembic upgrade head` on an empty database and then asserts Alembic autogenerate finds NO differences from the SQLAlchemy models (`alembic check` or `compare_metadata`). Fix any drift with a NEW revision.
+- Add one sentence to `README.md` stating that schema changes require a new revision and baseline edits are forbidden after first deployment.
 
 ## Stop condition
-When done or blocked, overwrite `REPORT.md` with: status per item, files changed, exact command outputs, skipped items marked NOT RUN with reasons, and open questions. Then tell the user "REPORT.md is ready."
+When done or blocked, overwrite `REPORT.md` with: status per item, files changed, exact command outputs, anything NOT RUN with reasons, and open questions. Then tell the user "REPORT.md is ready."
