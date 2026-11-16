@@ -127,6 +127,9 @@ export interface UserProfile {
   timezone: string;
   is_active: boolean;
   created_at: string;
+  email_verified: boolean;
+  phone_verified: boolean;
+  phone_e164?: string | null;
 }
 
 export interface Category {
@@ -430,5 +433,29 @@ export const api = {
         body: JSON.stringify(payload),
       }),
     delete: (id: string) => apiClient<void>(`/loans/${id}`, { method: "DELETE" }),
+  },
+
+  verification: {
+    sendEmail: () =>
+      apiClient<{ status: string; message: string }>("/verification/email/send", {
+        method: "POST",
+      }),
+    confirmEmail: (code: string) =>
+      apiClient<{ status: string; channel: string }>("/verification/email/confirm", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      }),
+    sendPhone: (phone: string) =>
+      apiClient<{ status: string; message: string }>("/verification/phone/send", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      }),
+    confirmPhone: (code: string) =>
+      apiClient<{ status: string; channel: string }>("/verification/phone/confirm", {
+        method: "POST",
+        body: JSON.stringify({ code }),
+      }),
+    getTestLastCode: (channel: "email" | "phone" = "email") =>
+      apiClient<{ code: string; channel: string }>(`/verification/test-last-code?channel=${channel}`),
   },
 };

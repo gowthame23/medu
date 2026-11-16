@@ -11,6 +11,7 @@ import NightlyCheckInModal from "@/components/NightlyCheckInModal";
 import AddRadarModal from "@/components/AddRadarModal";
 import AddLoanModal from "@/components/AddLoanModal";
 import UPIIntentModal from "@/components/UPIIntentModal";
+import VerificationBanner from "@/components/VerificationBanner";
 import {
   api,
   BillRadarItem,
@@ -22,7 +23,7 @@ import { Loader2 } from "lucide-react";
 
 export default function Home() {
   const router = useRouter();
-  const { user, loading, logout } = useAuth();
+  const { user, loading, logout, refreshUser } = useAuth();
 
   // Dual-Account Mode: 'individual' (Private Space) vs 'family' (Household Hub)
   const [currentMode, setCurrentMode] = useState<"individual" | "family">("individual");
@@ -161,6 +162,8 @@ export default function Home() {
         familyGroupName={activeFamily ? activeFamily.group_name : "Household Hub"}
         onLogout={logout}
       />
+
+      <VerificationBanner user={user} onRefreshUser={refreshUser} />
 
       <main className="flex-1">
         {activeTab === "dashboard" ? (

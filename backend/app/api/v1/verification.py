@@ -2,11 +2,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import select
+
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import get_current_user
+from app.core.deps import get_current_user, bearer_scheme
+from app.core.security import decode_access_token
 from app.core.rate_limit import get_client_ip, verification_rate_limiter
-from app.core.errors import ResourceNotFoundException
+from app.core.errors import ResourceNotFoundException, AuthenticationFailedException
 from app.models.user import User
 from app.schemas.verification import (
     VerificationSendResponse,
@@ -93,12 +97,33 @@ async def confirm_phone_verification(
 )
 async def get_test_last_code(
     channel: str = "email",
-    current_user: User = Depends(get_current_user),
+    email: Optional[str] = None,
+    auth: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
+    db: AsyncSession = Depends(get_db),
 ):
     """Test-only endpoint to retrieve the last issued code for E2E testing."""
+    import uuid
     if settings.APP_ENV == "production":
         raise ResourceNotFoundException("Test endpoint not available in production.")
-    code = get_last_test_code(current_user.id, channel)
+
+    user_id: Optional[uuid.UUID] = None
+    if auth and auth.credentials:
+        try:
+            payload = decode_access_token(auth.credentials)
+            user_id = uuid.UUID(payload.get("sub"))
+        except Exception:
+            pass
+
+    if not user_id and email:
+        res = await db.execute(select(User).where(User.email == email.strip().lower()))
+        user = res.scalar_one_or_none()
+        if user:
+            user_id = user.id
+
+    if not user_id:
+        raise AuthenticationFailedException("Authentication or email query required.")
+
+    code = get_last_test_code(user_id, channel)
     if not code:
         raise ResourceNotFoundException("No active test code found.")
     return {"code": code, "channel": channel}

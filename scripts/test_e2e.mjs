@@ -132,6 +132,40 @@ async function runE2E() {
     await page.waitForSelector(`text=${testName}`, { timeout: 8000 });
     console.log("  -> User profile confirmed on dashboard.");
 
+    // STEP 2.5: Email Verification Flow
+    console.log("  -> Step 2.5: Verifying email verification banner and confirmation flow...");
+    const banner = page.locator('div[data-testid="verification-banner"]');
+    await banner.waitFor({ state: "visible", timeout: 8000 });
+    console.log("  -> 'Verify your email' banner is displayed for unverified user.");
+
+    // Open email verification modal
+    await page.click('button[data-testid="verify-email-banner-btn"]');
+    await page.waitForSelector("text=Verify Email", { timeout: 5000 });
+
+    // Request code
+    console.log("  -> Requesting email verification code...");
+    await page.click('button:has-text("Send Verification Code")');
+    await page.waitForSelector("text=Verification code dispatched", { timeout: 8000 });
+
+    // Read code via test-only mechanism
+    console.log("  -> Reading code via test-only helper endpoint...");
+    const codeRes = await fetch(
+      `http://localhost:8000/api/v1/verification/test-last-code?channel=email&email=${encodeURIComponent(testEmail)}`
+    );
+    if (!codeRes.ok) {
+      throw new Error(`Failed to retrieve test code from backend: ${codeRes.statusText}`);
+    }
+    const { code } = await codeRes.json();
+    console.log(`  -> Retrieved test verification code: ${code}`);
+
+    // Enter code and submit
+    await page.fill('input[data-testid="verification-code-input"]', code);
+    await page.click('button[data-testid="confirm-verification-btn"]');
+
+    // Wait for modal to close and verification banner to disappear
+    await banner.waitFor({ state: "detached", timeout: 8000 });
+    console.log("  -> Email successfully verified and banner disappeared from dashboard!");
+
     // STEP 3: Logout to test login flow
     console.log("  -> Step 3: Testing logout...");
     await page.click('button[title="Sign out"]');
