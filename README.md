@@ -52,11 +52,14 @@ python -m venv venv
 # Linux/macOS:
 source venv/bin/activate
 
+# Minimal production dependencies:
 pip install -r requirements.txt
-# For testing and development:
+# Testing and development dependencies (pytest, httpx, etc.):
 pip install -r requirements-dev.txt
+
+# Run migrations (forward-only, baseline migrations immutable):
 python -m alembic upgrade head
-# Note: Schema changes strictly require a new revision, and baseline edits to applied migrations are strictly forbidden after first deployment.
+
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -98,9 +101,11 @@ docker compose up --build
 
 ---
 
-## ⚠️ Known Limits & Implementation Scope (v1)
+## ⚠️ Known Limits & Verification Status
 
-- **Rate Limiting**: Sliding-window rate limiter is currently in-process and per-worker memory. Multi-worker deployments require Redis.
+- **PostgreSQL**: Verified locally against Windows PostgreSQL 16 on port 5432 with `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 30 tests including `test_postgres_concurrent_payment_race_condition` and clean Alembic upgrade from scratch (`0fa0163424e7` -> `a2551f055745`).
+- **Docker / Docker Compose**: **NOT RUN** locally because Docker Engine is not installed on this host environment. Dockerfile and `docker-compose.yml` are maintained and configured with unprivileged users (`menduser`), parameterized database credentials, and minimal production dependencies (`requirements.txt`).
+- **Rate Limiting**: Sliding-window rate limiter is currently in-process and per-worker memory with an LRU cap of 10,000 keys. Multi-worker deployments require Redis.
 - **Payment Gateway**: Payments are currently driven by a simulated sandbox provider (`ENABLE_SANDBOX_PAYMENTS=True`). No live NPCI UPI or BBPS endpoints are connected.
 - **Self-Reported Payments**: Marked as `PAID_UNVERIFIED` until external biller confirmation.
 - **Account Recovery**: No email verification tokens or SMTP delivery; no password reset flow. Authentication uses direct Argon2id credentials.

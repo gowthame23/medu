@@ -37,14 +37,30 @@ To eliminate IEEE-754 binary floating-point rounding errors and wealth drift:
 - **Idempotency Key Scoping**: Every payment intent requires a client-generated UUID `Idempotency-Key` scoped to `(bill_id, idempotency_key)`. Attempting to reuse an existing idempotency key with different financial parameters returns `409 Conflict`.
 - **Payment Cancellation**: Active `PENDING` payment intents can be explicitly cancelled (`POST /bills/{id}/payment/cancel`), marking the transaction `FAILED` and releasing the bill lock for immediate re-attempt.
 - **Self-Reported Payment Status (`PAID_UNVERIFIED`)**: Bills marked as paid without gateway verification transition to `PAID_UNVERIFIED` with an immutable attribution snapshot, requiring provider verification before clearance while preventing duplicate payment attempts.
-- **Webhook State Machine & Deduplication**: Webhooks strictly transition transactions from `PENDING` to `SUCCESS` or `FAILED`. Deliveries on already cancelled/FAILED or settled bills are recorded in the audit ledger without altering bill status (`ignored_terminal_state`). Amounts are cryptographically validated against the transaction amount before transition. Processed event IDs are recorded in `payment_events` with an indexed `UNIQUE(event_id)` database constraint; duplicate simultaneous deliveries are gracefully caught and returned as `already_processed`.
+- **Webhook State Machine & Deduplication**: Webhooks strictly transition transactions from `PENDING` to `SUCCESS` or `FAILED`. Deliveries on already cancelled/FAILED or settled bills are recorded in the audit ledger without altering bill status (`ignored_terminal_state`). Amounts are cryptographically validated against the transaction amount before transition. Processed event IDs are recorded in `payment_events` with an indexed `UNIQUE(event_id)` database constraint; duplicate simultaneous deliveries are gracefully caught and returned as `already_processed`. On database errors (`OperationalError`, `IntegrityError`), the endpoint rolls back and returns HTTP 503 `DATABASE_TEMPORARILY_UNAVAILABLE`, prompting gateway retry with exponential backoff.
 - **Outbox Worker**: Asynchronous notification publishing uses `SELECT ... FOR UPDATE SKIP LOCKED` and exponential backoff retries (up to 5 attempts) to prevent worker contention and notification loss.
 
-## 6. Dynamic Liabilities & Amortization
+## 6. Dynamic Liabilities, Bounds & Pagination
 - **Dynamic Remaining Principal**: Loans support recording periodic payments (`POST /loans/{id}/payments`), lump-sum prepayments (`POST /loans/{id}/prepayments`), and parameter updates (`PATCH /loans/{id}`). Remaining principal balances and daily interest costs update dynamically based on recorded amortization events.
+- **Input Bounds & Invariants**:
+  - `GET /daily-logs/range`: Requires `start_date <= end_date` and caps span at 366 days, returning 422 `ValidationException` with standard error envelope otherwise.
+  - Loans: `principal_amount` bounded to `(0, 1,000,000,000.00]`. Loan payment amounts and prepayment lump sums must be positive and cannot exceed current remaining principal balance. Prepayment simulation month must not exceed total tenure months.
+- **Bounded List Pagination**: All collection endpoints (`/notifications`, `/bills`, `/families/{id}/bills`, `/families/{id}/payments`, `/loans`) enforce bounded pagination with `limit` (default 50, maximum 200) and `offset` (default 0), and deterministic secondary tie-breaking ordering (`id`).
 
-## 7. Known Limits & Implementation Scope (v1)
-- **Rate Limiting**: In-memory and per-process. Multi-worker deployments require Redis-backed sliding windows.
+## 7. Audit Logging, HMAC Hashing & Privacy Redaction
+- **Comprehensive Lifecycle Audit Coverage**: Audit logging covers authentication events (`LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_CHANGED`), household management (`FAMILY_CREATED`, `FAMILY_INVITE_SENT`, `FAMILY_MEMBER_REMOVED`), bills (`BILL_CREATED`, `BILL_DELETED`, `BILL_MARKED_PAID`), payments (`PAYMENT_INTENT_CREATED`, `PAYMENT_CANCELLED`, `PAYMENT_SUCCESS`), and private liabilities (`LOAN_CREATED`, `LOAN_DELETED`).
+- **HMAC-Keyed Email Hashing**: Emails stored in audit logs are hashed using HMAC-SHA256 keyed with a secret derived from `SECRET_KEY` (`SECRET_KEY + ':audit_email_salt'`), preventing rainbow table and dictionary reversal attacks.
+- **Zero-Debt Leakage in Audit Trails**: Loan audit entries record entity/user identifiers only (`metadata_json={}`). Loan names, principal amounts, interest rates, and remaining balances are never stored in audit logs, guaranteeing zero debt leakage even to compliance reviewers.
+- **Indexed Compliance Queries**: `audit_logs` table has dedicated indexes on `(created_at)` and `(user_id)` for performant timeline queries.
+
+## 8. Dependency Hygiene & Migration Discipline
+- **Pinned Dependencies**: `backend/requirements.txt` contains pinned production dependencies without test or build tooling. `backend/requirements-dev.txt` extends it with test runners and development utilities (`pytest`, `httpx`, `pytest-asyncio`). Production Docker images install strictly from `requirements.txt`.
+- **Forward-Only Schema Migrations**: Applied migrations (`0fa0163424e7_initial_schema.py` and `a2551f055745_add_audit_indexes_and_payment_event_id.py`) are immutable baselines and must never be edited. Schema changes strictly require new revision files. The test suite includes `test_alembic_upgrade_head_and_check_no_schema_drift` to assert zero schema drift.
+
+## 9. Verification Status & Known Limits (v1)
+- **PostgreSQL**: Verified locally on Windows against PostgreSQL 16 on port 5432 using `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 30 tests including the concurrent payment race condition test (`test_postgres_concurrent_payment_race_condition`) and clean Alembic upgrade from scratch.
+- **Docker**: **NOT RUN** locally because Docker Engine is not installed on this host environment. Dockerfile and `docker-compose.yml` are maintained and configured with unprivileged users (`menduser`), parameterized database credentials, and minimal production dependencies (`requirements.txt`).
+- **Rate Limiting**: In-memory and per-process with an LRU cap of 10,000 keys. Multi-worker deployments require Redis-backed sliding windows.
 - **Payment Provider**: Sandbox simulated provider only (`ENABLE_SANDBOX_PAYMENTS=True` in dev/test). Production requires integration with real payment gateway APIs.
 - **Bill Fetching / BBPS**: Mock BBPS discovery engine only. No live NPCI BBPS or RBI Account Aggregator endpoints are connected.
 - **Self-Reported Payments**: Self-reported settlements (`PAID_UNVERIFIED`) are user claims and unverified by any external banking authority until reconciled.
