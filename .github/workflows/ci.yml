@@ -42,8 +42,9 @@ jobs:
           APP_ENV: testing
           ENABLE_SANDBOX_PAYMENTS: "true"
           DATABASE_URL: postgresql+asyncpg://mend_user:mend_password@localhost:5432/mend_test
+          TEST_DATABASE_URL: postgresql+asyncpg://mend_user:mend_password@localhost:5432/mend_test
         run: |
-          python -m pytest -v
+          python -m pytest -v -rs
 
   frontend-build:
     name: Frontend Build, Lint & Typecheck
@@ -123,4 +124,5 @@ jobs:
           APP_ENV: testing
           ENABLE_SANDBOX_PAYMENTS: "true"
           DATABASE_URL: postgresql+asyncpg://mend_user:mend_password@localhost:5432/mend_test
+          TEST_DATABASE_URL: postgresql+asyncpg://mend_user:mend_password@localhost:5432/mend_test
         run: npm run test:e2e
