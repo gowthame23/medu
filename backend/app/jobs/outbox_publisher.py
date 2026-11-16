@@ -1,18 +1,22 @@
 from datetime import datetime, timezone, timedelta
 import uuid
+import smtplib
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.outbox import OutboxEvent
 from app.models.notification import Notification
 from app.models.family import FamilyMember
+from app.core.security import decrypt_outbox_payload
+from app.providers.notify import get_email_sender, get_sms_sender
 
 
 async def publish_pending_outbox_events(session: AsyncSession) -> int:
     """
-    Polls pending OutboxEvents and creates in-app notifications.
+    Polls pending OutboxEvents and dispatches them (notifications, verification email/SMS).
     Uses SKIP LOCKED for safe concurrent multi-worker processing
     and exponential backoff retry.
+    Wipes encrypted verification payload upon successful delivery.
     """
     now = datetime.now(timezone.utc)
     query = (
@@ -69,13 +73,37 @@ async def publish_pending_outbox_events(session: AsyncSession) -> int:
                         )
                         session.add(notif)
 
+            elif event.event_type == "VERIFICATION_EMAIL_DISPATCH":
+                decrypted = decrypt_outbox_payload(event.payload)
+                sender = get_email_sender()
+                await sender.send_email(
+                    to_email=decrypted["to_email"],
+                    subject=decrypted.get("subject", "Mend Verification Code"),
+                    body=decrypted["body"]
+                )
+                # Sensitive payload wiped on delivery
+                event.payload = {}
+
+            elif event.event_type == "VERIFICATION_PHONE_DISPATCH":
+                decrypted = decrypt_outbox_payload(event.payload)
+                sender = get_sms_sender()
+                await sender.send_sms(
+                    to_phone_e164=decrypted["to_phone_e164"],
+                    message=decrypted["message"]
+                )
+                # Sensitive payload wiped on delivery
+                event.payload = {}
+
             event.status = "DELIVERED"
             event.processed_at = datetime.now(timezone.utc)
             published_count += 1
         except Exception as e:
             event.attempts += 1
-            event.last_error = str(e)
-            # Exponential backoff retry: 2^attempts * 15 seconds (e.g. 30s, 60s, 120s, 240s, 480s)
+            if isinstance(e, smtplib.SMTPAuthenticationError):
+                err_msg = "SMTPAuthenticationError: Authentication failed"
+            else:
+                err_msg = str(e)
+            event.last_error = err_msg
             backoff_seconds = (2 ** event.attempts) * 15
             event.next_attempt_at = now + timedelta(seconds=backoff_seconds)
             if event.attempts >= 5:

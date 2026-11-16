@@ -97,6 +97,12 @@ async def client():
 
 
 @pytest_asyncio.fixture
+async def db_session():
+    async with TestAsyncSessionLocal() as session:
+        yield session
+
+
+@pytest_asyncio.fixture
 async def create_user_fixture():
     async def _create(email: str, display_name: str, password: str = "SecurePass123!") -> tuple[User, str]:
         async with TestAsyncSessionLocal() as session:

@@ -71,3 +71,55 @@ def create_access_token(
 def decode_access_token(token: str) -> Dict[str, Any]:
     """Decodes and verifies an access JWT."""
     return jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+
+
+def hash_verification_target(target: str) -> str:
+    """Computes an HMAC-SHA256 of normalized target (email or phone), keyed by SECRET_KEY derived key."""
+    import hmac
+    derived_key = hashlib.sha256((settings.SECRET_KEY + ":verification_target_salt").encode("utf-8")).digest()
+    return hmac.new(derived_key, target.strip().encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def hash_verification_code(challenge_id: str, code: str) -> str:
+    """Computes an HMAC-SHA256 of code + challenge_id, keyed by SECRET_KEY derived key."""
+    import hmac
+    derived_key = hashlib.sha256((settings.SECRET_KEY + ":verification_code_salt").encode("utf-8")).digest()
+    message = f"{challenge_id}:{code.strip()}"
+    return hmac.new(derived_key, message.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def hash_audit_phone(phone: str) -> str:
+    """Computes an HMAC-SHA256 of normalized phone, keyed by SECRET_KEY derived key."""
+    import hmac
+    derived_key = hashlib.sha256((settings.SECRET_KEY + ":audit_phone_salt").encode("utf-8")).digest()
+    return hmac.new(derived_key, phone.strip().encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def encrypt_outbox_payload(data: dict) -> dict:
+    """Encrypts payload using AES-256-GCM with key derived from SECRET_KEY."""
+    import base64
+    import json
+    import os
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key = hashlib.sha256((settings.SECRET_KEY + ":outbox_payload_enc").encode("utf-8")).digest()
+    aesgcm = AESGCM(key)
+    nonce = os.urandom(12)
+    plaintext = json.dumps(data).encode("utf-8")
+    ciphertext = aesgcm.encrypt(nonce, plaintext, None)
+    return {
+        "encrypted_data": base64.b64encode(ciphertext).decode("utf-8"),
+        "nonce": base64.b64encode(nonce).decode("utf-8")
+    }
+
+
+def decrypt_outbox_payload(payload: dict) -> dict:
+    """Decrypts AES-256-GCM encrypted outbox payload."""
+    import base64
+    import json
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key = hashlib.sha256((settings.SECRET_KEY + ":outbox_payload_enc").encode("utf-8")).digest()
+    aesgcm = AESGCM(key)
+    nonce = base64.b64decode(payload["nonce"])
+    ciphertext = base64.b64decode(payload["encrypted_data"])
+    plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+    return json.loads(plaintext.decode("utf-8"))
