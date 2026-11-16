@@ -35,6 +35,17 @@ async def list_family_bills(
     return await service.get_family_bills(id)
 
 
+@router.get("/bills/radar", response_model=List[UpcomingRadarResponse])
+async def get_family_radar(
+    id: uuid.UUID,
+    horizon_days: int = 7,
+    auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
+    db: AsyncSession = Depends(get_db)
+):
+    service = BillService(db)
+    return await service.get_family_radar(id, horizon_days=horizon_days)
+
+
 @router.post("/bills", response_model=UpcomingRadarResponse, status_code=status.HTTP_201_CREATED)
 async def create_family_bill(
     id: uuid.UUID,
@@ -116,6 +127,38 @@ async def pay_family_bill(
         bill_id=bid,
         idempotency_key=idempotency_key,
         payer=payer,
+        family_group_id=id
+    )
+
+
+@router.post("/bills/{bid}/mark-paid", response_model=UpcomingRadarResponse)
+async def mark_family_bill_paid(
+    id: uuid.UUID,
+    bid: uuid.UUID,
+    auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
+    db: AsyncSession = Depends(get_db)
+):
+    payer, _ = auth_data
+    service = BillService(db)
+    return await service.mark_family_bill_paid(
+        family_group_id=id,
+        bill_id=bid,
+        user=payer
+    )
+
+
+@router.post("/bills/{bid}/payment/cancel", response_model=PaymentResponse)
+async def cancel_family_bill_payment(
+    id: uuid.UUID,
+    bid: uuid.UUID,
+    auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
+    db: AsyncSession = Depends(get_db)
+):
+    payer, _ = auth_data
+    service = PaymentService(db)
+    return await service.cancel_pending_payment(
+        bill_id=bid,
+        user=payer,
         family_group_id=id
     )
 

@@ -46,6 +46,11 @@ class UserRepository:
         await self.db.execute(stmt)
         await self.db.commit()
 
+    async def update_password(self, user_id: uuid.UUID, password_hash: str) -> None:
+        stmt = update(User).where(User.id == user_id).values(password_hash=password_hash)
+        await self.db.execute(stmt)
+        await self.db.commit()
+
     async def update_profile(
         self,
         user_id: uuid.UUID,
@@ -100,7 +105,12 @@ class UserRepository:
         now = datetime.now(timezone.utc)
         stmt = update(RefreshToken).where(
             RefreshToken.user_id == user_id,
-            RefreshToken.revoked_at == None
-        ).values(revoked_at=now)
+            RefreshToken.revoked_at.is_(None)
+        ).values(revoked_at=now, replaced_by_id=None)
         await self.db.execute(stmt)
+        # Also clear replaced_by_id on previously rotated tokens so grace window is permanently closed
+        stmt_chain = update(RefreshToken).where(
+            RefreshToken.user_id == user_id
+        ).values(replaced_by_id=None)
+        await self.db.execute(stmt_chain)
         await self.db.commit()

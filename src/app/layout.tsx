@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import './globals.css';
+import { AuthProvider } from '@/context/AuthContext';
 
 export const metadata: Metadata = {
   title: 'Mend — The Anxiety-Free Household & Family Financial Platform',
@@ -25,7 +26,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col items-center justify-start bg-[#f4f4f0] font-sans antialiased">
         {/* Constrained Mobile Shell for Phone Form Factor */}
         <div className="w-full max-w-md min-h-screen bg-[#fafaf7] shadow-xl sm:border-x sm:border-stone-200/80 flex flex-col relative overflow-x-hidden">
-          {children}
+          <AuthProvider>{children}</AuthProvider>
         </div>
       </body>
     </html>

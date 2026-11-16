@@ -9,6 +9,9 @@ from app.models.liability import LiabilitiesVault
 from app.repositories.liability import LiabilityRepository
 from app.schemas.liability import (
     LoanResponse,
+    LoanUpdateRequest,
+    LoanPaymentResponse,
+    LoanPrepaymentResponse,
     DailyCostResponse,
     AmortizationScheduleResponse,
     AmortizationInstallment,
@@ -134,6 +137,7 @@ class LiabilityService:
             id=loan.id,
             loan_name=loan.loan_name,
             principal_amount=loan.principal_amount,
+            remaining_principal=loan.principal_amount,
             interest_rate=loan.interest_rate,
             tenure_months=loan.tenure_months,
             start_date=loan.start_date,
@@ -144,33 +148,147 @@ class LiabilityService:
 
     async def get_loans(self, user_id: uuid.UUID) -> List[LoanResponse]:
         loans = await self.liability_repo.get_loans(user_id)
-        return [
-            LoanResponse(
-                id=l.id,
-                loan_name=l.loan_name,
-                principal_amount=l.principal_amount,
-                interest_rate=l.interest_rate,
-                tenure_months=l.tenure_months,
-                start_date=l.start_date,
-                monthly_emi=l.monthly_emi,
-                currency=l.currency,
-                created_at=l.created_at
+        results = []
+        for l in loans:
+            rem = await self.liability_repo.get_remaining_principal(user_id, l.id)
+            results.append(
+                LoanResponse(
+                    id=l.id,
+                    loan_name=l.loan_name,
+                    principal_amount=l.principal_amount,
+                    remaining_principal=rem,
+                    interest_rate=l.interest_rate,
+                    tenure_months=l.tenure_months,
+                    start_date=l.start_date,
+                    monthly_emi=l.monthly_emi,
+                    currency=l.currency,
+                    created_at=l.created_at
+                )
             )
-            for l in loans
-        ]
+        return results
+
+    async def record_payment(
+        self,
+        user_id: uuid.UUID,
+        loan_id: uuid.UUID,
+        payment_date: date,
+        principal_paid: Decimal,
+        interest_paid: Decimal
+    ) -> LoanPaymentResponse:
+        loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
+        if not loan:
+            raise ResourceNotFoundException("Loan", "Loan not found in private vault")
+
+        current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+        new_rem = max(Decimal("0.00"), current_rem - principal_paid)
+
+        payment = await self.liability_repo.add_payment(
+            loan_id=loan.id,
+            payment_date=payment_date,
+            principal_paid=principal_paid,
+            interest_paid=interest_paid,
+            remaining_balance=new_rem
+        )
+        return LoanPaymentResponse(
+            id=payment.id,
+            loan_id=payment.loan_id,
+            payment_date=payment.payment_date,
+            principal_paid=payment.principal_paid,
+            interest_paid=payment.interest_paid,
+            remaining_balance=payment.remaining_balance,
+            created_at=payment.created_at
+        )
+
+    async def record_prepayment(
+        self,
+        user_id: uuid.UUID,
+        loan_id: uuid.UUID,
+        prepayment_date: date,
+        lump_sum_amount: Decimal,
+        effect: str = "REDUCE_TENURE"
+    ) -> LoanPrepaymentResponse:
+        loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
+        if not loan:
+            raise ResourceNotFoundException("Loan", "Loan not found in private vault")
+
+        prepayment = await self.liability_repo.add_prepayment(
+            loan_id=loan.id,
+            prepayment_date=prepayment_date,
+            lump_sum_amount=lump_sum_amount,
+            effect=effect
+        )
+
+        # If effect is REDUCE_EMI, recalculate monthly_emi on remaining principal
+        if effect == "REDUCE_EMI":
+            new_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+            if new_rem > 0:
+                new_emi = calculate_monthly_emi(new_rem, loan.interest_rate, loan.tenure_months)
+                await self.liability_repo.update_loan(user_id, loan_id, monthly_emi=new_emi)
+
+        return LoanPrepaymentResponse(
+            id=prepayment.id,
+            loan_id=prepayment.loan_id,
+            prepayment_date=prepayment.prepayment_date,
+            lump_sum_amount=prepayment.lump_sum_amount,
+            effect=prepayment.effect,
+            created_at=prepayment.created_at
+        )
+
+    async def update_loan(
+        self,
+        user_id: uuid.UUID,
+        loan_id: uuid.UUID,
+        data: LoanUpdateRequest
+    ) -> LoanResponse:
+        loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
+        if not loan:
+            raise ResourceNotFoundException("Loan", "Loan not found in private vault")
+
+        rate = data.interest_rate if data.interest_rate is not None else loan.interest_rate
+        tenure = data.tenure_months if data.tenure_months is not None else loan.tenure_months
+        rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+
+        values = {}
+        if data.loan_name is not None:
+            values["loan_name"] = data.loan_name
+        if data.interest_rate is not None:
+            values["interest_rate"] = data.interest_rate
+        if data.tenure_months is not None:
+            values["tenure_months"] = data.tenure_months
+
+        if data.interest_rate is not None or data.tenure_months is not None:
+            values["monthly_emi"] = calculate_monthly_emi(rem, rate, tenure)
+
+        updated = await self.liability_repo.update_loan(user_id, loan_id, **values)
+        new_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+        return LoanResponse(
+            id=updated.id,
+            loan_name=updated.loan_name,
+            principal_amount=updated.principal_amount,
+            remaining_principal=new_rem,
+            interest_rate=updated.interest_rate,
+            tenure_months=updated.tenure_months,
+            start_date=updated.start_date,
+            monthly_emi=updated.monthly_emi,
+            currency=updated.currency,
+            created_at=updated.created_at
+        )
 
     async def get_daily_cost(self, user_id: uuid.UUID, loan_id: uuid.UUID) -> DailyCostResponse:
         loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
         if not loan:
             raise ResourceNotFoundException("Loan", "Loan not found in private vault")
 
+        # Dynamically compute remaining balance taking into account prepayments and repayments
+        remaining_balance = await self.liability_repo.get_remaining_principal(user_id, loan_id)
+
         # Daily Cost = balance * annual_rate / 365 / 100
-        daily_interest = (loan.principal_amount * loan.interest_rate) / Decimal("36500")
+        daily_interest = (remaining_balance * loan.interest_rate) / Decimal("36500")
 
         return DailyCostResponse(
             loan_id=loan.id,
             loan_name=loan.loan_name,
-            remaining_principal=loan.principal_amount,
+            remaining_principal=remaining_balance,
             annual_rate=loan.interest_rate,
             daily_interest_cost=quantize_money(daily_interest),
             currency=loan.currency

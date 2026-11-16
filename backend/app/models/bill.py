@@ -41,6 +41,7 @@ class UpcomingRadar(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     category: Mapped[str] = mapped_column(String(50), default="utility", nullable=False)
     bill_status: Mapped[str] = mapped_column(String(20), default="UNPAID", nullable=False, index=True)  # UNPAID, PAID, PAID_UNVERIFIED, OVERDUE
     recurrence_interval: Mapped[str] = mapped_column(String(20), default="NONE", nullable=False)  # NONE, WEEKLY, MONTHLY, QUARTERLY, YEARLY
+    anchor_day: Mapped[Optional[int]] = mapped_column(nullable=True)  # Original anchor day of month (1-31)
     next_bill_generated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)

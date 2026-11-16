@@ -146,6 +146,10 @@ class FamilyService:
         if not invitation:
             raise ResourceNotFoundException("Invitation", "Invalid invitation token.")
 
+        # Email-bound security verification
+        if accepting_user.email.lower() != invitation.email.lower():
+            raise ForbiddenException("This invitation was issued to a different email address.")
+
         if invitation.status != InvitationStatus.PENDING.value:
             raise ConflictException("INVALID_INVITATION", f"Invitation has already been {invitation.status.lower()}.")
 

@@ -23,7 +23,7 @@ class BillService:
 
     async def _enrich_bill_response(self, bill: UpcomingRadar, include_full_consumer: bool = False) -> UpcomingRadarResponse:
         payment = await self.bill_repo.get_latest_successful_payment(bill.id)
-        is_paid = (bill.bill_status == "PAID")
+        is_paid = (bill.bill_status in ("PAID", "PAID_UNVERIFIED"))
         masked = mask_consumer_number(bill.consumer_number)
 
         base_data = {
@@ -83,6 +83,24 @@ class BillService:
             raise ResourceNotFoundException("Bill", "Bill not found")
         return await self._enrich_bill_response(bill, include_full_consumer=True)
 
+    async def get_personal_radar(self, user_id: uuid.UUID, horizon_days: int = 7) -> List[UpcomingRadarResponse]:
+        bills = await self.bill_repo.get_personal_radar(user_id, horizon_days)
+        return [await self._enrich_bill_response(b) for b in bills]
+
+    async def mark_personal_bill_paid(
+        self,
+        user: User,
+        bill_id: uuid.UUID
+    ) -> UpcomingRadarResponse:
+        from app.services.payment import PaymentService
+        payment_service = PaymentService(self.db)
+        updated = await payment_service.settle_self_reported_payment(
+            bill_id=bill_id,
+            payer=user,
+            family_group_id=None
+        )
+        return await self._enrich_bill_response(updated)
+
     async def create_family_bill(
         self,
         family_group_id: uuid.UUID,
@@ -115,6 +133,25 @@ class BillService:
         if not bill:
             raise ResourceNotFoundException("Bill", "Bill not found")
         return await self._enrich_bill_response(bill, include_full_consumer=True)
+
+    async def get_family_radar(self, family_group_id: uuid.UUID, horizon_days: int = 7) -> List[UpcomingRadarResponse]:
+        bills = await self.bill_repo.get_family_radar(family_group_id, horizon_days)
+        return [await self._enrich_bill_response(b) for b in bills]
+
+    async def mark_family_bill_paid(
+        self,
+        family_group_id: uuid.UUID,
+        bill_id: uuid.UUID,
+        user: User
+    ) -> UpcomingRadarResponse:
+        from app.services.payment import PaymentService
+        payment_service = PaymentService(self.db)
+        updated = await payment_service.settle_self_reported_payment(
+            bill_id=bill_id,
+            payer=user,
+            family_group_id=family_group_id
+        )
+        return await self._enrich_bill_response(updated)
 
     async def update_family_bill(
         self,

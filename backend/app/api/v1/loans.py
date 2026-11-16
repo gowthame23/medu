@@ -9,7 +9,12 @@ from app.models.user import User
 from app.services.liability import LiabilityService
 from app.schemas.liability import (
     LoanCreateRequest,
+    LoanUpdateRequest,
     LoanResponse,
+    LoanPaymentCreateRequest,
+    LoanPaymentResponse,
+    LoanPrepaymentCreateRequest,
+    LoanPrepaymentResponse,
     DailyCostResponse,
     AmortizationScheduleResponse,
     PrepaymentSimulateRequest,
@@ -104,3 +109,48 @@ async def delete_loan(
 ):
     service = LiabilityService(db)
     await service.liability_repo.delete_loan(current_user.id, id)
+
+
+@router.patch("/{id}", response_model=LoanResponse)
+async def update_loan(
+    id: uuid.UUID,
+    data: LoanUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = LiabilityService(db)
+    return await service.update_loan(current_user.id, id, data)
+
+
+@router.post("/{id}/payments", response_model=LoanPaymentResponse, status_code=status.HTTP_201_CREATED)
+async def record_loan_payment(
+    id: uuid.UUID,
+    data: LoanPaymentCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = LiabilityService(db)
+    return await service.record_payment(
+        user_id=current_user.id,
+        loan_id=id,
+        payment_date=data.payment_date,
+        principal_paid=data.principal_paid,
+        interest_paid=data.interest_paid
+    )
+
+
+@router.post("/{id}/prepayments", response_model=LoanPrepaymentResponse, status_code=status.HTTP_201_CREATED)
+async def record_loan_prepayment(
+    id: uuid.UUID,
+    data: LoanPrepaymentCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = LiabilityService(db)
+    return await service.record_prepayment(
+        user_id=current_user.id,
+        loan_id=id,
+        prepayment_date=data.prepayment_date,
+        lump_sum_amount=data.lump_sum_amount,
+        effect=data.effect
+    )

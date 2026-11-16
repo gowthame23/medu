@@ -19,9 +19,19 @@ from app.jobs.scheduler import start_scheduler, shutdown_scheduler
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Ensure database tables exist and seed system defaults
-    async with async_engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    # Startup validation: Fail fast if sandbox payments or insecure secrets are enabled in production
+    if settings.APP_ENV == "production":
+        if settings.ENABLE_SANDBOX_PAYMENTS:
+            raise RuntimeError("CRITICAL SECURITY ERROR: Cannot start in production with ENABLE_SANDBOX_PAYMENTS=True")
+        if "dev-insecure" in settings.WEBHOOK_SECRET or len(settings.WEBHOOK_SECRET) < 32:
+            raise RuntimeError("CRITICAL SECURITY ERROR: Production requires a secure WEBHOOK_SECRET of at least 32 characters")
+        if "dev-insecure" in settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
+            raise RuntimeError("CRITICAL SECURITY ERROR: Production requires a secure SECRET_KEY of at least 32 characters")
+
+    # In development/testing, ensure database tables exist
+    if settings.APP_ENV != "production":
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
 
     async with AsyncSessionLocal() as session:
         repo = ExpenseRepository(session)
@@ -36,14 +46,53 @@ async def lifespan(app: FastAPI):
     await async_engine.dispose()
 
 
+docs_url = None if settings.APP_ENV == "production" else f"{settings.API_V1_PREFIX}/docs"
+redoc_url = None if settings.APP_ENV == "production" else f"{settings.API_V1_PREFIX}/redoc"
+openapi_url = None if settings.APP_ENV == "production" else f"{settings.API_V1_PREFIX}/openapi.json"
+
 app = FastAPI(
     title=settings.APP_NAME,
     description="The Anxiety-Free Household & Family Financial Platform API",
     version="1.0.0",
-    docs_url=f"{settings.API_V1_PREFIX}/docs",
-    openapi_url=f"{settings.API_V1_PREFIX}/openapi.json",
+    docs_url=docs_url,
+    redoc_url=redoc_url,
+    openapi_url=openapi_url,
     lifespan=lifespan
 )
+
+# CSRF / Origin Verification on mutating requests
+@app.middleware("http")
+async def verify_origin_middleware(request: Request, call_next):
+    if request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        # Exclude webhook endpoints which originate from payment provider servers
+        if not request.url.path.endswith("/webhook"):
+            origin = request.headers.get("origin")
+            referer = request.headers.get("referer")
+            check_header = origin or referer
+
+            # In production, mutating requests MUST have an Origin or Referer header
+            if not check_header:
+                if settings.APP_ENV == "production":
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"error": {"code": "FORBIDDEN", "message": "Missing Origin header on mutating request."}}
+                    )
+            else:
+                from urllib.parse import urlparse
+                parsed = urlparse(check_header)
+                origin_base = f"{parsed.scheme}://{parsed.netloc}"
+                allowed = set(settings.CORS_ORIGINS)
+
+                # Test/dev exemptions are STRICTLY non-production only
+                if settings.APP_ENV != "production":
+                    allowed.update({"http://testserver", "http://test", "http://localhost"})
+
+                if origin_base not in allowed:
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"error": {"code": "FORBIDDEN", "message": "Cross-origin request rejected."}}
+                    )
+    return await call_next(request)
 
 # CORS
 app.add_middleware(
@@ -114,6 +163,8 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 from fastapi.encoders import jsonable_encoder
 
 
+HTTP_422 = getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     envelope = ErrorEnvelope(
@@ -124,7 +175,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         )
     )
     return JSONResponse(
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=HTTP_422,
         content=envelope.model_dump()
     )
 

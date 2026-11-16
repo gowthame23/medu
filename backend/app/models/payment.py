@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional, List, Dict, Any
 from sqlalchemy import (
-    String, DateTime, Numeric, ForeignKey, JSON, Text, Index
+    String, DateTime, Numeric, ForeignKey, JSON, Text, Index, text
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,7 +19,14 @@ class PaymentTransaction(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "uq_bill_active_payment",
             "bill_id",
             unique=True,
-            postgresql_where="status IN ('PENDING', 'SUCCESS')",
+            postgresql_where=text("status IN ('PENDING', 'SUCCESS')"),
+            sqlite_where=text("status IN ('PENDING', 'SUCCESS')"),
+        ),
+        Index(
+            "uq_bill_idempotency",
+            "bill_id",
+            "idempotency_key",
+            unique=True,
         ),
     )
 
@@ -52,6 +59,9 @@ class PaymentEvent(Base, UUIDPrimaryKeyMixin):
 
     transaction_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("payment_transactions.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event_id: Mapped[Optional[str]] = mapped_column(
+        String(128), unique=True, index=True, nullable=True
     )
     from_status: Mapped[str] = mapped_column(String(20), nullable=False)
     to_status: Mapped[str] = mapped_column(String(20), nullable=False)

@@ -33,6 +33,16 @@ class PaymentProvider(ABC):
     async def verify(self, intent_id: str) -> PaymentResult:
         pass
 
+    @abstractmethod
+    def verify_webhook_signature(
+        self,
+        payload_bytes: bytes,
+        signature: str,
+        timestamp_str: str,
+        secret: str
+    ) -> bool:
+        pass
+
 
 class BillFetchProvider(ABC):
     @abstractmethod

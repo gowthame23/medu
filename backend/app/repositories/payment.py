@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, List, Dict, Any, Tuple
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import PaymentTransaction, PaymentEvent
@@ -64,9 +65,12 @@ class PaymentRepository:
             detail={"action": "INITIATE_PAYMENT", "idempotency_key": idempotency_key}
         )
         self.db.add(event)
-        await self.db.commit()
-        await self.db.refresh(txn)
-        return txn
+        try:
+            await self.db.commit()
+            return txn
+        except (IntegrityError, OperationalError):
+            await self.db.rollback()
+            raise
 
     async def finalize_transaction(
         self,
@@ -97,9 +101,12 @@ class PaymentRepository:
             detail={"payment_reference": payment_reference, "failure_reason": failure_reason}
         )
         self.db.add(event)
-        await self.db.commit()
-        await self.db.refresh(txn)
-        return txn
+        try:
+            await self.db.commit()
+            return txn
+        except (IntegrityError, OperationalError):
+            await self.db.rollback()
+            raise
 
     async def get_family_payment_history(self, family_group_id: uuid.UUID) -> List[Tuple[PaymentTransaction, str]]:
         """Returns list of (PaymentTransaction, bill_title) for family group."""

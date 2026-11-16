@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     APP_NAME: str = "Mend"
     APP_ENV: str = "development"  # development, testing, production
-    DEBUG: bool = True
+    DEBUG: bool = False
     API_V1_PREFIX: str = "/api/v1"
 
     # Database
@@ -30,9 +30,17 @@ class Settings(BaseSettings):
     # Rate Limiting
     RATE_LIMIT_LOGIN_PER_MIN: int = 5
     RATE_LIMIT_REGISTER_PER_MIN: int = 5
+    RATE_LIMIT_REFRESH_PER_MIN: int = 30
+    RATE_LIMIT_INVITE_ACCEPT_PER_MIN: int = 10
+    RATE_LIMIT_MAX_TRACKED_IPS: int = 10000
+
+    # Reverse Proxy & Network Security
+    TRUSTED_PROXIES: List[str] = ["127.0.0.1", "::1"]
 
     # Payments & Sandbox
+    PAYMENT_PROVIDER: str = "SANDBOX_UPI"
     ENABLE_SANDBOX_PAYMENTS: bool = True
+    WEBHOOK_SECRET: str = "dev-insecure-webhook-secret-2026"
 
     # CORS
     CORS_ORIGINS: List[str] = [
@@ -63,6 +71,17 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CRITICAL SECURITY CONFIGURATION ERROR: "
                 "Production requires a strong SECRET_KEY of at least 32 characters."
+            )
+        return v
+
+    @field_validator("WEBHOOK_SECRET")
+    @classmethod
+    def validate_webhook_secret_in_production(cls, v: str, info) -> str:
+        env = info.data.get("APP_ENV")
+        if env == "production" and ("dev-insecure" in v or len(v) < 32):
+            raise ValueError(
+                "CRITICAL SECURITY CONFIGURATION ERROR: "
+                "Production requires a strong WEBHOOK_SECRET of at least 32 characters."
             )
         return v
 

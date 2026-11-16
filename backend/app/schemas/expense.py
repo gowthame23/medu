@@ -46,3 +46,20 @@ class DailyLogResponse(StrictBaseModel):
     total_spent: Money  # Computed dynamically from entries (SUM), no drift!
     entries: List[DailyLogEntryResponse]
     created_at: datetime
+
+
+class CategoryTotalItem(StrictBaseModel):
+    category_id: Optional[uuid.UUID] = None
+    category_name: str
+    category_icon: Optional[str] = None
+    total_spent: Money
+
+
+class DailyLogRangeResponse(StrictBaseModel):
+    start_date: date
+    end_date: date
+    total_spent: Money
+    streak_days: int
+    category_totals: List[CategoryTotalItem]
+    logs: List[DailyLogResponse]
+

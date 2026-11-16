@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Calendar, Moon, Shield, Lock, Users, Sparkles } from 'lucide-react';
+import { Calendar, Shield, Moon, Lock } from 'lucide-react';
 
 interface MobileNavBarProps {
   currentMode: 'individual' | 'family';

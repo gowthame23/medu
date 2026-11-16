@@ -113,6 +113,27 @@ class ExpenseRepository:
 
         return log
 
+    async def get_daily_logs_range(
+        self,
+        user_id: uuid.UUID,
+        start_date: date,
+        end_date: date
+    ) -> List[DailyLog]:
+        query = (
+            select(DailyLog)
+            .options(
+                selectinload(DailyLog.entries).selectinload(DailyLogEntry.category)
+            )
+            .where(
+                DailyLog.user_id == user_id,
+                DailyLog.log_date >= start_date,
+                DailyLog.log_date <= end_date
+            )
+            .order_by(DailyLog.log_date.asc())
+        )
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
     async def update_daily_log_notes(
         self,
         user_id: uuid.UUID,

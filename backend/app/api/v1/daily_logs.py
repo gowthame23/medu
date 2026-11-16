@@ -14,6 +14,7 @@ from app.schemas.expense import (
     DailyLogResponse,
     DailyLogEntryCreateRequest,
     DailyLogUpdateRequest,
+    DailyLogRangeResponse,
 )
 
 router = APIRouter(tags=["Daily Expense Check-in"])
@@ -36,6 +37,17 @@ async def create_category(
 ):
     service = ExpenseService(db)
     return await service.create_custom_category(current_user.id, data.name, data.icon)
+
+
+@router.get("/daily-logs/range", response_model=DailyLogRangeResponse)
+async def get_daily_logs_range(
+    start_date: date = Query(..., description="Start date (YYYY-MM-DD)"),
+    end_date: date = Query(..., description="End date (YYYY-MM-DD)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = ExpenseService(db)
+    return await service.get_daily_logs_range(current_user.id, start_date, end_date)
 
 
 @router.get("/daily-logs", response_model=DailyLogResponse)

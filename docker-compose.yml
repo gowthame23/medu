@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: mend
       POSTGRES_USER: mend_user
-      POSTGRES_PASSWORD: mend_secure_dev_password_2026
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mend_secure_dev_password_2026}
     ports:
       - "5432:5432"
     volumes:
@@ -25,12 +25,13 @@ services:
       db:
         condition: service_healthy
     environment:
-      APP_ENV: development
-      DEBUG: "true"
-      DATABASE_URL: postgresql+psycopg://mend_user:mend_secure_dev_password_2026@db:5432/mend
-      DATABASE_URL_SYNC: postgresql://mend_user:mend_secure_dev_password_2026@db:5432/mend
-      SECRET_KEY: dev-insecure-secret-key-change-in-production-mend-2026-xyz
-      ENABLE_SANDBOX_PAYMENTS: "true"
+      APP_ENV: ${APP_ENV:-development}
+      DEBUG: ${DEBUG:-"false"}
+      DATABASE_URL: postgresql+asyncpg://mend_user:${POSTGRES_PASSWORD:-mend_secure_dev_password_2026}@db:5432/mend
+      DATABASE_URL_SYNC: postgresql://mend_user:${POSTGRES_PASSWORD:-mend_secure_dev_password_2026}@db:5432/mend
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be provided}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET must be provided}
+      ENABLE_SANDBOX_PAYMENTS: ${ENABLE_SANDBOX_PAYMENTS:-"true"}
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
     ports:
       - "8000:8000"
@@ -44,7 +45,8 @@ services:
     depends_on:
       - api
     environment:
-      NEXT_PUBLIC_API_URL: http://api:8000/api/v1
+      NEXT_PUBLIC_API_URL: "/api/v1"
+      BACKEND_INTERNAL_URL: "http://api:8000"
     ports:
       - "3000:3000"
 

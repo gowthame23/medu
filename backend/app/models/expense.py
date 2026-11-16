@@ -4,7 +4,7 @@ from decimal import Decimal
 from typing import Optional, List
 from sqlalchemy import (
     String, Integer, Boolean, Date, Numeric, Text, ForeignKey,
-    UniqueConstraint, CheckConstraint, Index
+    UniqueConstraint, CheckConstraint, Index, text
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -15,6 +15,13 @@ class ExpenseCategory(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "expense_categories"
     __table_args__ = (
         UniqueConstraint("user_id", "name", name="uq_category_user_name"),
+        Index(
+            "uq_system_category_name",
+            "name",
+            unique=True,
+            postgresql_where=text("user_id IS NULL"),
+            sqlite_where=text("user_id IS NULL"),
+        ),
     )
 
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(

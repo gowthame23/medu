@@ -21,6 +21,10 @@ from app.models.user import User, RefreshToken
 from app.schemas.user import TokenResponse, UserResponse
 
 
+# Dummy Argon2 hash for constant-time authentication and user enumeration mitigation
+DUMMY_ARGON2_HASH = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgqlfreSaAcw"
+
+
 class AuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -35,8 +39,18 @@ class AuthService:
     ) -> UserResponse:
         existing = await self.user_repo.get_by_email(email)
         if existing:
-            # Generic error to prevent email enumeration
-            raise ConflictException("REGISTRATION_FAILED", "Email already registered")
+            # Constant-time computation: compute hash even if user exists to prevent timing attacks
+            hash_password(password)
+            # Return uniform response to prevent email enumeration and account metadata leakage
+            # NEVER expose the existing user's real ID or created_at timestamp
+            return UserResponse(
+                id=uuid.uuid4(),
+                email=email,
+                display_name=display_name,
+                timezone=timezone_str,
+                is_active=True,
+                created_at=datetime.now(timezone.utc)
+            )
 
         pwd_hash = hash_password(password)
         user = await self.user_repo.create(
@@ -54,7 +68,12 @@ class AuthService:
         user_agent: Optional[str] = None
     ) -> Tuple[TokenResponse, str]:
         user = await self.user_repo.get_by_email(email)
-        if not user or not verify_password(password, user.password_hash):
+        if not user:
+            # Constant-time mitigation against user enumeration
+            verify_password(password, DUMMY_ARGON2_HASH)
+            raise AuthenticationFailedException("Invalid email or password")
+
+        if not verify_password(password, user.password_hash):
             raise AuthenticationFailedException("Invalid email or password")
 
         await self.user_repo.update_last_login(user.id)
@@ -93,9 +112,31 @@ class AuthService:
         if not token_record:
             raise TokenRevokedOrExpiredException("Invalid refresh token")
 
-        # REUSE DETECTION: If token already revoked, someone is replaying it!
-        # Revoke the ENTIRE chain for this user as a security measure.
+        # REUSE DETECTION: If token already revoked, check grace window for concurrent requests (e.g. React StrictMode)
         if token_record.revoked_at is not None:
+            now = datetime.now(timezone.utc)
+            rev_at = token_record.revoked_at
+            if rev_at.tzinfo is None:
+                rev_at = rev_at.replace(tzinfo=timezone.utc)
+
+            # 30-second grace window ONLY for legitimately rotated tokens (has replaced_by_id)
+            if token_record.replaced_by_id is not None and (now - rev_at).total_seconds() <= 30:
+                user = await self.user_repo.get_by_id(token_record.user_id)
+                if not user or not user.is_active:
+                    raise AuthenticationFailedException("User not found or inactive")
+                access_token = create_access_token(str(user.id), user.email)
+                token_resp = TokenResponse(
+                    access_token=access_token,
+                    token_type="bearer",
+                    expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+                    user_id=user.id,
+                    email=user.email,
+                    display_name=user.display_name
+                )
+                # Return fresh access token and empty refresh string so cookie is untouched
+                return token_resp, ""
+
+            # Outside grace window or invalidated session: genuine reuse breach detected. Revoke all tokens!
             await self.user_repo.revoke_all_user_tokens(token_record.user_id)
             raise TokenRevokedOrExpiredException("Security violation: Revoked token reuse detected. All sessions invalidated.")
 
@@ -144,3 +185,15 @@ class AuthService:
             token_record = await self.user_repo.get_refresh_token_by_hash(token_hash)
             if token_record and token_record.revoked_at is None:
                 await self.user_repo.revoke_refresh_token(token_record.id)
+
+    async def change_password(self, user_id: uuid.UUID, current_password: str, new_password: str) -> None:
+        user = await self.user_repo.get_by_id(user_id)
+        if not user or not verify_password(current_password, user.password_hash):
+            raise AuthenticationFailedException("Current password is incorrect")
+        new_hash = hash_password(new_password)
+        await self.user_repo.update_password(user_id, new_hash)
+        # Security: Revoke all refresh tokens so all sessions must re-authenticate
+        await self.user_repo.revoke_all_user_tokens(user_id)
+
+    async def logout_all(self, user_id: uuid.UUID) -> None:
+        await self.user_repo.revoke_all_user_tokens(user_id)

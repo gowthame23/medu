@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_family_member, require_family_admin
+from app.core.rate_limit import invitation_accept_rate_limiter
 from app.models.user import User
 from app.models.family import FamilyMember
 from app.services.family import FamilyService
@@ -117,7 +118,7 @@ async def revoke_invitation(
     await service.family_repo.revoke_invitation(id, inv_id)
 
 
-@router.post("/invitations/accept", response_model=FamilyGroupResponse)
+@router.post("/invitations/accept", response_model=FamilyGroupResponse, dependencies=[Depends(invitation_accept_rate_limiter)])
 async def accept_invitation(
     data: AcceptInvitationRequest,
     current_user: User = Depends(get_current_user),

@@ -28,6 +28,16 @@ async def list_personal_bills(
     return await service.get_personal_bills(current_user.id)
 
 
+@router.get("/radar", response_model=List[UpcomingRadarResponse])
+async def get_personal_radar(
+    horizon_days: int = 7,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = BillService(db)
+    return await service.get_personal_radar(current_user.id, horizon_days=horizon_days)
+
+
 @router.post("", response_model=UpcomingRadarResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_bill(
     data: UpcomingRadarCreateRequest,
@@ -106,3 +116,26 @@ async def pay_personal_bill(
         payer=current_user,
         family_group_id=None
     )
+
+
+@router.post("/{id}/mark-paid", response_model=UpcomingRadarResponse)
+async def mark_personal_bill_paid(
+    id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = BillService(db)
+    return await service.mark_personal_bill_paid(
+        user=current_user,
+        bill_id=id
+    )
+
+
+@router.post("/{id}/payment/cancel", response_model=PaymentResponse)
+async def cancel_personal_bill_payment(
+    id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    service = PaymentService(db)
+    return await service.cancel_pending_payment(bill_id=id, user=current_user)

@@ -1,3 +1,6 @@
+import hmac
+import hashlib
+import time
 import secrets
 from decimal import Decimal
 from urllib.parse import quote
@@ -42,3 +45,32 @@ class SandboxUPIProvider(PaymentProvider):
             payment_reference=txn_ref,
             failure_reason=None
         )
+
+    def verify_webhook_signature(
+        self,
+        payload_bytes: bytes,
+        signature: str,
+        timestamp_str: str,
+        secret: str
+    ) -> bool:
+        """
+        Verifies HMAC-SHA256 signature and protects against replay attacks (5 min tolerance).
+        """
+        try:
+            ts = int(timestamp_str)
+            now = int(time.time())
+            # 5-minute replay window tolerance
+            if abs(now - ts) > 300:
+                return False
+
+            # Signed string format: {timestamp}.{payload}
+            signed_payload = f"{ts}.".encode("utf-8") + payload_bytes
+            expected_sig = hmac.new(
+                secret.encode("utf-8"),
+                signed_payload,
+                hashlib.sha256
+            ).hexdigest()
+
+            return hmac.compare_digest(expected_sig, signature)
+        except Exception:
+            return False

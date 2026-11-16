@@ -1,9 +1,26 @@
 import uuid
 from datetime import date, datetime
 from typing import Optional, List
+from enum import Enum
 from pydantic import Field
 
 from app.schemas.common import StrictBaseModel, Money
+
+
+class BillCategory(str, Enum):
+    UTILITY = "utility"
+    HOUSING = "housing"
+    TELECOM = "telecom"
+    SUBSCRIPTION = "subscription"
+    OTHER = "other"
+
+
+class RecurrenceInterval(str, Enum):
+    NONE = "NONE"
+    WEEKLY = "WEEKLY"
+    MONTHLY = "MONTHLY"
+    QUARTERLY = "QUARTERLY"
+    YEARLY = "YEARLY"
 
 
 class UpcomingRadarCreateRequest(StrictBaseModel):
@@ -11,8 +28,8 @@ class UpcomingRadarCreateRequest(StrictBaseModel):
     amount: Money
     due_date: date
     consumer_number: Optional[str] = Field(None, max_length=100)
-    category: Optional[str] = "utility"
-    recurrence_interval: Optional[str] = "NONE"  # NONE, WEEKLY, MONTHLY, QUARTERLY, YEARLY
+    category: Optional[BillCategory] = BillCategory.UTILITY
+    recurrence_interval: Optional[RecurrenceInterval] = RecurrenceInterval.NONE
 
 
 class UpcomingRadarUpdateRequest(StrictBaseModel):
@@ -20,8 +37,8 @@ class UpcomingRadarUpdateRequest(StrictBaseModel):
     amount: Optional[Money] = None
     due_date: Optional[date] = None
     consumer_number: Optional[str] = None
-    category: Optional[str] = None
-    recurrence_interval: Optional[str] = None
+    category: Optional[BillCategory] = None
+    recurrence_interval: Optional[RecurrenceInterval] = None
 
 
 class UpcomingRadarResponse(StrictBaseModel):

@@ -1,7 +1,8 @@
 import uuid
+import zoneinfo
 from datetime import datetime
 from typing import Optional, List
-from pydantic import EmailStr, Field
+from pydantic import EmailStr, Field, field_validator
 
 from app.schemas.common import StrictBaseModel
 from app.models.family import FamilyRole, InvitationStatus
@@ -11,10 +12,24 @@ class FamilyGroupCreateRequest(StrictBaseModel):
     group_name: str = Field(min_length=1, max_length=100)
     timezone: Optional[str] = "Asia/Kolkata"
 
+    @field_validator("timezone")
+    @classmethod
+    def validate_tz(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in zoneinfo.available_timezones():
+            raise ValueError(f"Invalid IANA timezone: '{v}'")
+        return v
+
 
 class FamilyGroupUpdateRequest(StrictBaseModel):
     group_name: Optional[str] = Field(None, min_length=1, max_length=100)
     timezone: Optional[str] = None
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_tz(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in zoneinfo.available_timezones():
+            raise ValueError(f"Invalid IANA timezone: '{v}'")
+        return v
 
 
 class FamilyMemberResponse(StrictBaseModel):

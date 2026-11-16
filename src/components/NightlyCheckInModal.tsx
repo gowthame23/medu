@@ -1,235 +1,273 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { X, CheckCircle, Sparkles, Moon, Plus, Undo2 } from 'lucide-react';
-import confetti from 'canvas-confetti';
+import React, { useState, useEffect } from "react";
+import { X, Moon, Loader2, Plus, Trash2 } from "lucide-react";
+import { api, Category } from "@/lib/api";
 
 interface NightlyCheckInModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
-  userId?: string;
-  userName?: string;
 }
 
-interface CategoryConfig {
-  key: string;
-  label: string;
-  icon: string;
-  defaultQuickStep: number;
+function parseMoneyToPaise(val: string): number | null {
+  const trimmed = val.trim();
+  if (!/^\d+(\.\d{1,2})?$/.test(trimmed)) return null;
+  const parts = trimmed.split(".");
+  const rupees = parseInt(parts[0], 10);
+  const paise = parts[1] ? parseInt(parts[1].padEnd(2, "0"), 10) : 0;
+  if (rupees === 0 && paise === 0) return null;
+  return rupees * 100 + paise;
 }
 
-const CATEGORIES: CategoryConfig[] = [
-  { key: 'groceries', label: 'Groceries', icon: '🛒', defaultQuickStep: 200 },
-  { key: 'bills', label: 'Bills', icon: '💡', defaultQuickStep: 500 },
-  { key: 'transport', label: 'Transport', icon: '🚇', defaultQuickStep: 100 },
-  { key: 'dining', label: 'Dining', icon: '🍲', defaultQuickStep: 300 },
-  { key: 'health', label: 'Health', icon: '💊', defaultQuickStep: 200 },
-  { key: 'misc', label: 'Misc', icon: '✨', defaultQuickStep: 150 },
-];
+function formatPaiseToString(paise: number): string {
+  const r = Math.floor(paise / 100);
+  const p = paise % 100;
+  return `${r}.${p.toString().padStart(2, "0")}`;
+}
 
 export default function NightlyCheckInModal({
   isOpen,
   onClose,
   onSuccess,
-  userId,
-  userName = 'You',
 }: NightlyCheckInModalProps) {
-  const [categories, setCategories] = useState<Record<string, number>>({});
-  const [activeCategory, setActiveCategory] = useState<string>('groceries');
-  const [notes, setNotes] = useState<string>('');
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>("");
+  const [amount, setAmount] = useState<string>("");
+  const [stagedEntries, setStagedEntries] = useState<Array<{ categoryId: string; categoryName: string; amount: string }>>([]);
+  const [notes, setNotes] = useState<string>("");
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
-  const [hasCelebrated, setHasCelebrated] = useState<boolean>(false);
+  const [isLoadingCategories, setIsLoadingCategories] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let isMounted = true;
+
+    async function loadCategories() {
+      try {
+        setIsLoadingCategories(true);
+        const cats = await api.categories.list();
+        if (isMounted) {
+          setCategories(cats);
+          if (cats.length > 0) setSelectedCategoryId(cats[0].id);
+        }
+      } catch (err) {
+        if (isMounted) setError(err instanceof Error ? err.message : "Failed to load expense categories");
+      } finally {
+        if (isMounted) setIsLoadingCategories(false);
+      }
+    }
+
+    loadCategories();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
-  const totalSpent = Object.values(categories).reduce((sum, val) => sum + (val || 0), 0);
+  const handleStageEntry = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!amount.trim() || !selectedCategoryId) return;
 
-  const handleAddAmount = (catKey: string, amount: number) => {
-    setCategories(prev => ({
+    const paise = parseMoneyToPaise(amount);
+    if (paise === null || paise <= 0) {
+      setError("Please enter a valid expense amount");
+      return;
+    }
+
+    const cat = categories.find((c) => c.id === selectedCategoryId);
+    const catName = cat ? cat.name : "Expense";
+
+    setStagedEntries((prev) => [
       ...prev,
-      [catKey]: (prev[catKey] || 0) + amount,
-    }));
+      {
+        categoryId: selectedCategoryId,
+        categoryName: catName,
+        amount: formatPaiseToString(paise),
+      },
+    ]);
+    setAmount("");
+    setError(null);
   };
 
-  const handleResetCategory = (catKey: string) => {
-    setCategories(prev => {
-      const next = { ...prev };
-      delete next[catKey];
-      return next;
-    });
+  const handleRemoveStaged = (index: number) => {
+    setStagedEntries((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
-    try {
-      const res = await fetch('/api/daily-logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          totalSpent,
-          categoriesBreakdown: categories,
-          notes: notes.trim(),
-        }),
-      });
+    setError(null);
+    const todayStr = new Date().toISOString().split("T")[0];
 
-      if (res.ok) {
-        setHasCelebrated(true);
-        setTimeout(() => {
-          onSuccess();
-          onClose();
-          setHasCelebrated(false);
-          setCategories({});
-          setNotes('');
-        }, 800);
+    try {
+      // Add each staged entry to today's daily log
+      for (const entry of stagedEntries) {
+        await api.dailyLogs.addEntry(todayStr, entry.categoryId, entry.amount);
       }
-    } catch (err) {
-      console.error('Failed to submit check-in:', err);
+
+      // Update notes if provided
+      if (notes.trim()) {
+        await api.dailyLogs.updateNotes(todayStr, notes.trim());
+      }
+
+      onSuccess();
+      onClose();
+      setStagedEntries([]);
+      setNotes("");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to complete check-in.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const totalStaged = formatPaiseToString(
+    stagedEntries.reduce((sum, item) => sum + (parseMoneyToPaise(item.amount) ?? 0), 0)
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex flex-col justify-end bg-black/50 backdrop-blur-xs animate-fade-in">
-      {/* Background touch dismiss */}
       <div className="flex-1" onClick={onClose} />
 
-      {/* Mobile Bottom Sheet Container */}
       <div className="w-full max-w-md mx-auto bg-white rounded-t-3xl shadow-2xl border-t border-stone-200/80 p-5 space-y-4 max-h-[90vh] overflow-y-auto pb-safe">
-        {/* Drag Pill & Header */}
-        <div className="flex flex-col items-center">
-          <div className="w-10 h-1 rounded-full bg-stone-300 mb-3" />
-          <div className="w-full flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold">
-                <Moon className="w-4 h-4 text-emerald-700" />
-              </div>
-              <div>
-                <h3 className="text-base font-extrabold text-stone-900 leading-none">
-                  30s Nightly Check-In
-                </h3>
-                <span className="text-[10px] text-stone-500">Tap chips to add today’s total</span>
-              </div>
+        <div className="flex items-center justify-between pb-2 border-b border-stone-100">
+          <div className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center font-bold">
+              <Moon className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-sm font-extrabold text-stone-900">
+                Daily Financial Check-in
+              </h3>
+              <p className="text-[10px] text-stone-500">
+                30-second low-friction ritual • No guilt, pure awareness
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-7 h-7 rounded-full bg-stone-100 hover:bg-stone-200 text-stone-500 flex items-center justify-center transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {error && (
+          <div className="p-3 text-xs bg-rose-50 text-rose-700 border border-rose-200 rounded-xl">
+            {error}
+          </div>
+        )}
+
+        {/* Add Entry Line */}
+        <form onSubmit={handleStageEntry} className="space-y-2 text-xs">
+          <div className="grid grid-cols-12 gap-2 items-end">
+            <div className="col-span-6">
+              <label className="block font-semibold text-stone-700 mb-1">
+                Category
+              </label>
+              <select
+                value={selectedCategoryId}
+                onChange={(e) => setSelectedCategoryId(e.target.value)}
+                disabled={isLoadingCategories}
+                className="w-full px-2.5 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs"
+              >
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <button
-              onClick={onClose}
-              className="w-8 h-8 rounded-full bg-stone-100 text-stone-500 flex items-center justify-center active:scale-95"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
+            <div className="col-span-4">
+              <label className="block font-semibold text-stone-700 mb-1">
+                Amount (₹)
+              </label>
+              <input
+                type="number"
+                step="0.01"
+                min="0.01"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="250.00"
+                className="w-full px-2.5 py-2 bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500/20 text-xs font-mono"
+              />
+            </div>
 
-        {/* Total Big Pill */}
-        <div className="p-3.5 rounded-2xl bg-emerald-50/80 border border-emerald-100 text-center">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800">
-            Today&apos;s Total
-          </span>
-          <div className="text-3xl font-black text-stone-900 mt-0.5">
-            ₹{totalSpent.toLocaleString('en-IN')}
+            <div className="col-span-2">
+              <button
+                type="submit"
+                className="w-full py-2 bg-emerald-800 hover:bg-emerald-900 text-white rounded-xl flex items-center justify-center transition"
+                title="Add expense"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
           </div>
-        </div>
+        </form>
 
-        {/* Mobile Quick-Chips Matrix (Thumb-Tappable) */}
-        <div>
-          <label className="block text-[11px] font-bold text-stone-700 mb-1.5">
-            Tap Category to Add:
-          </label>
-          <div className="grid grid-cols-3 gap-2">
-            {CATEGORIES.map(cat => {
-              const currentVal = categories[cat.key] || 0;
-              const isSelected = activeCategory === cat.key;
-              return (
-                <button
-                  key={cat.key}
-                  type="button"
-                  onClick={() => {
-                    setActiveCategory(cat.key);
-                    handleAddAmount(cat.key, cat.defaultQuickStep);
-                  }}
-                  className={`p-2.5 rounded-2xl border text-center transition-all flex flex-col items-center justify-between min-h-[70px] active:scale-95 ${
-                    isSelected
-                      ? 'border-emerald-600 bg-emerald-50/60 shadow-xs'
-                      : 'border-stone-200 bg-white hover:border-stone-300'
-                  }`}
+        {/* Staged list */}
+        {stagedEntries.length > 0 && (
+          <div className="space-y-1.5 pt-2">
+            <div className="text-[11px] font-bold text-stone-600 flex justify-between">
+              <span>Expenses to Record</span>
+              <span className="font-mono text-emerald-800">Total: ₹{totalStaged}</span>
+            </div>
+            <div className="space-y-1 max-h-36 overflow-y-auto">
+              {stagedEntries.map((item, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between p-2 rounded-xl bg-stone-50 border border-stone-100 text-xs"
                 >
-                  <span className="text-xl">{cat.icon}</span>
-                  <span className="text-[10px] font-bold text-stone-800 mt-1 block">
-                    {cat.label}
-                  </span>
-                  <span className="text-[10px] font-extrabold text-emerald-800">
-                    {currentVal > 0 ? `₹${currentVal}` : `+₹${cat.defaultQuickStep}`}
-                  </span>
-                </button>
-              );
-            })}
+                  <span className="font-medium text-stone-800">{item.categoryName}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono font-bold text-stone-900">₹{item.amount}</span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveStaged(idx)}
+                      className="text-stone-400 hover:text-rose-600 transition"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
 
-        {/* Adjust Step Increments for Active Category */}
-        <div className="p-3 rounded-2xl bg-stone-100/70 border border-stone-200/60 space-y-2">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-stone-700">
-              Quick adjust for <span className="text-emerald-800 capitalize font-bold">{activeCategory}</span>:
-            </span>
-            {(categories[activeCategory] || 0) > 0 && (
-              <button
-                type="button"
-                onClick={() => handleResetCategory(activeCategory)}
-                className="text-stone-400 hover:text-stone-700 flex items-center gap-1 text-[10px]"
-              >
-                <Undo2 className="w-3 h-3" /> Clear
-              </button>
-            )}
-          </div>
-
-          <div className="grid grid-cols-4 gap-1.5">
-            {[100, 250, 500, 1000].map(step => (
-              <button
-                key={step}
-                type="button"
-                onClick={() => handleAddAmount(activeCategory, step)}
-                className="py-1.5 text-xs font-bold rounded-xl bg-white border border-stone-200 text-stone-800 active:scale-95 transition-transform"
-              >
-                +₹{step}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Optional Note */}
+        {/* Notes */}
         <div>
-          <input
-            type="text"
-            placeholder="Quick note (optional, e.g. groceries & train)"
+          <label className="block text-xs font-semibold text-stone-700 mb-1">
+            Day reflection (Optional)
+          </label>
+          <textarea
+            rows={2}
             value={notes}
-            onChange={e => setNotes(e.target.value)}
-            className="w-full px-3.5 py-2 text-xs rounded-xl border border-stone-200 bg-white focus:outline-none focus:ring-1 focus:ring-emerald-700"
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Spent intentionally today. No stress."
+            className="w-full px-3 py-2 bg-stone-50 border border-stone-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-700 resize-none"
           />
         </div>
 
-        {/* Giant Mobile Bottom Action Button */}
-        <div className="pt-2">
-          <button
-            onClick={handleSubmit}
-            disabled={isSubmitting || hasCelebrated}
-            className="w-full py-3.5 rounded-2xl text-sm font-bold bg-emerald-800 hover:bg-emerald-900 text-white transition-all active:scale-98 flex items-center justify-center gap-2 shadow-md disabled:opacity-50"
-          >
-            {hasCelebrated ? (
-              <>
-                <CheckCircle className="w-5 h-5 text-emerald-300" />
-                <span>Saved for today ✨</span>
-              </>
-            ) : (
-              <>
-                <span>{isSubmitting ? 'Saving...' : 'Save Daily Check-In'}</span>
-              </>
-            )}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={handleSubmit}
+          disabled={isSubmitting || (stagedEntries.length === 0 && !notes.trim())}
+          className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-800 hover:bg-emerald-900 text-white text-xs font-bold rounded-2xl shadow-xs transition active:scale-[0.99] disabled:opacity-50"
+        >
+          {isSubmitting ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Saving Check-in...</span>
+            </>
+          ) : (
+            <span>Complete Check-In</span>
+          )}
+        </button>
       </div>
     </div>
   );

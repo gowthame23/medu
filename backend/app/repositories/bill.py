@@ -42,6 +42,7 @@ class BillRepository:
             consumer_number=consumer_number,
             category=category,
             recurrence_interval=recurrence_interval,
+            anchor_day=due_date.day if recurrence_interval == "MONTHLY" else None,
             bill_status="UNPAID"
         )
         self.db.add(bill)
@@ -70,6 +71,7 @@ class BillRepository:
             consumer_number=consumer_number,
             category=category,
             recurrence_interval=recurrence_interval,
+            anchor_day=due_date.day if recurrence_interval == "MONTHLY" else None,
             bill_status="UNPAID"
         )
         self.db.add(bill)
@@ -82,7 +84,23 @@ class BillRepository:
             select(UpcomingRadar)
             .where(
                 UpcomingRadar.user_id == user_id,
-                UpcomingRadar.deleted_at == None
+                UpcomingRadar.deleted_at.is_(None)
+            )
+            .order_by(UpcomingRadar.due_date.asc())
+        )
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_personal_radar(self, user_id: uuid.UUID, horizon_days: int = 7) -> List[UpcomingRadar]:
+        from datetime import timedelta
+        cutoff = date.today() + timedelta(days=horizon_days)
+        query = (
+            select(UpcomingRadar)
+            .where(
+                UpcomingRadar.user_id == user_id,
+                UpcomingRadar.deleted_at.is_(None),
+                UpcomingRadar.due_date <= cutoff,
+                UpcomingRadar.bill_status.notin_(["PAID", "PAID_UNVERIFIED"])
             )
             .order_by(UpcomingRadar.due_date.asc())
         )
@@ -93,7 +111,7 @@ class BillRepository:
         query = select(UpcomingRadar).where(
             UpcomingRadar.id == bill_id,
             UpcomingRadar.user_id == user_id,
-            UpcomingRadar.deleted_at == None
+            UpcomingRadar.deleted_at.is_(None)
         )
         result = await self.db.execute(query)
         return result.scalar_one_or_none()
@@ -103,7 +121,23 @@ class BillRepository:
             select(UpcomingRadar)
             .where(
                 UpcomingRadar.family_group_id == family_group_id,
-                UpcomingRadar.deleted_at == None
+                UpcomingRadar.deleted_at.is_(None)
+            )
+            .order_by(UpcomingRadar.due_date.asc())
+        )
+        result = await self.db.execute(query)
+        return result.scalars().all()
+
+    async def get_family_radar(self, family_group_id: uuid.UUID, horizon_days: int = 7) -> List[UpcomingRadar]:
+        from datetime import timedelta
+        cutoff = date.today() + timedelta(days=horizon_days)
+        query = (
+            select(UpcomingRadar)
+            .where(
+                UpcomingRadar.family_group_id == family_group_id,
+                UpcomingRadar.deleted_at.is_(None),
+                UpcomingRadar.due_date <= cutoff,
+                UpcomingRadar.bill_status.notin_(["PAID", "PAID_UNVERIFIED"])
             )
             .order_by(UpcomingRadar.due_date.asc())
         )
@@ -114,7 +148,7 @@ class BillRepository:
         query = select(UpcomingRadar).where(
             UpcomingRadar.id == bill_id,
             UpcomingRadar.family_group_id == family_group_id,
-            UpcomingRadar.deleted_at == None
+            UpcomingRadar.deleted_at.is_(None)
         )
         result = await self.db.execute(query)
         return result.scalar_one_or_none()

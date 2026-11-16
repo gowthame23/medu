@@ -32,6 +32,16 @@ async def test_family_group_lifecycle_and_guards(client: AsyncClient, create_use
     assert "invite_token" in invitation
     raw_invite_token = invitation["invite_token"]
 
+    # 2b. Third-party with different email attempts to accept -> 403 Forbidden
+    eve_user, eve_token = await create_user_fixture("eve@intruder.com", "Eve Intruder")
+    eve_res = await client.post(
+        "/api/v1/invitations/accept",
+        json={"token": raw_invite_token},
+        headers={"Authorization": f"Bearer {eve_token}"}
+    )
+    assert eve_res.status_code == 403
+    assert "different email address" in eve_res.json()["error"]["message"]
+
     # 3. Member accepts invitation
     accept_res = await client.post(
         "/api/v1/invitations/accept",

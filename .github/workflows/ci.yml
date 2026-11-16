@@ -42,12 +42,12 @@ jobs:
         env:
           APP_ENV: testing
           ENABLE_SANDBOX_PAYMENTS: "true"
-          DATABASE_URL: postgresql+psycopg://mend_user:mend_password@localhost:5432/mend_test
+          DATABASE_URL: postgresql+asyncpg://mend_user:mend_password@localhost:5432/mend_test
         run: |
           python -m pytest -v
 
   frontend-build:
-    name: Frontend Build & Typecheck
+    name: Frontend Build, Lint & Typecheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -60,6 +60,12 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: TypeScript Check
+        run: npx tsc --noEmit
+
+      - name: ESLint
+        run: npm run lint
 
       - name: Next.js Production Build
         run: npm run build

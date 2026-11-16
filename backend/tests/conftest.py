@@ -4,22 +4,37 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.pool import StaticPool, NullPool
 
 from app.main import app
 from app.core.database import get_db
 from app.models.base import Base
+import app.models as _models  # Ensure all model tables are registered with Base.metadata
 from app.models.user import User
 from app.core.security import hash_password, create_access_token
+import os
 from app.repositories.expense import ExpenseRepository
 
-# In-memory async SQLite for test isolation
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+# Support real Postgres via DATABASE_URL or TEST_DATABASE_URL, with in-memory SQLite fallback
+TEST_DB_ENV = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL")
 
-test_async_engine = create_async_engine(
-    TEST_DATABASE_URL,
-    echo=False,
-    future=True
-)
+if TEST_DB_ENV and not TEST_DB_ENV.startswith("sqlite"):
+    if TEST_DB_ENV.startswith("postgresql://"):
+        TEST_DB_ENV = TEST_DB_ENV.replace("postgresql://", "postgresql+asyncpg://", 1)
+    test_async_engine = create_async_engine(
+        TEST_DB_ENV,
+        echo=False,
+        future=True
+    )
+else:
+    TEST_DATABASE_URL = "sqlite+aiosqlite:///file:testdb?mode=memory&cache=shared&uri=true"
+    test_async_engine = create_async_engine(
+        TEST_DATABASE_URL,
+        connect_args={"check_same_thread": False, "uri": True},
+        poolclass=NullPool,
+        echo=False,
+        future=True
+    )
 
 TestAsyncSessionLocal = async_sessionmaker(
     bind=test_async_engine,
@@ -27,6 +42,16 @@ TestAsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     autoflush=False
 )
+
+
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def keep_alive_sqlite():
+    if not (TEST_DB_ENV and not TEST_DB_ENV.startswith("sqlite")):
+        conn = await test_async_engine.connect()
+        yield conn
+        await conn.close()
+    else:
+        yield None
 
 
 @pytest_asyncio.fixture(scope="session")

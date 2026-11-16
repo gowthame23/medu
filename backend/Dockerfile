@@ -15,9 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Run non-root for security
-RUN useradd -m menduser && chown -R menduser:menduser /app
+RUN chmod +x /app/entrypoint.sh && useradd -m menduser && chown -R menduser:menduser /app
 USER menduser
 
 EXPOSE 8000
 
+ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
