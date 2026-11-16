@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple
@@ -13,6 +14,7 @@ from app.models.family import FamilyGroup, FamilyMember, FamilyInvitation, Famil
 from app.models.user import User
 from app.repositories.family import FamilyRepository
 from app.repositories.user import UserRepository
+from app.repositories.audit import AuditRepository
 from app.schemas.family import (
     FamilyGroupResponse,
     FamilyMemberResponse,
@@ -25,6 +27,7 @@ class FamilyService:
         self.db = db
         self.family_repo = FamilyRepository(db)
         self.user_repo = UserRepository(db)
+        self.audit_repo = AuditRepository(db)
 
     async def create_group(
         self,
@@ -104,7 +107,8 @@ class FamilyService:
         self,
         group_id: uuid.UUID,
         email: str,
-        acting_admin: User
+        acting_admin: User,
+        ip_address: Optional[str] = None
     ) -> FamilyInvitationResponse:
         # Check if already a member
         target_user = await self.user_repo.get_by_email(email)
@@ -124,6 +128,20 @@ class FamilyService:
             expires_at=expires_at
         )
 
+        email_hash = hashlib.sha256(email.lower().strip().encode("utf-8")).hexdigest()
+        await self.audit_repo.log_action(
+            action="INVITATION_CREATED",
+            entity_type="invitation",
+            entity_id=str(invitation.id),
+            user_id=acting_admin.id,
+            metadata_json={
+                "family_group_id": str(group_id),
+                "email_hash": email_hash
+            },
+            ip_address=ip_address,
+            commit=True
+        )
+
         return FamilyInvitationResponse(
             id=invitation.id,
             family_group_id=invitation.family_group_id,
@@ -138,7 +156,8 @@ class FamilyService:
     async def accept_invitation(
         self,
         raw_token: str,
-        accepting_user: User
+        accepting_user: User,
+        ip_address: Optional[str] = None
     ) -> FamilyGroupResponse:
         token_hash = hash_token(raw_token)
         invitation = await self.family_repo.get_invitation_by_hash(token_hash)
@@ -164,6 +183,17 @@ class FamilyService:
         existing = await self.family_repo.get_membership(invitation.family_group_id, accepting_user.id)
         if existing:
             await self.family_repo.mark_invitation_accepted(invitation.id)
+            await self.audit_repo.log_action(
+                action="INVITATION_ACCEPTED",
+                entity_type="invitation",
+                entity_id=str(invitation.id),
+                user_id=accepting_user.id,
+                metadata_json={
+                    "family_group_id": str(invitation.family_group_id)
+                },
+                ip_address=ip_address,
+                commit=True
+            )
             return await self.get_group_details(invitation.family_group_id, accepting_user.id)
 
         # Add as MEMBER
@@ -174,6 +204,18 @@ class FamilyService:
         )
         await self.family_repo.mark_invitation_accepted(invitation.id)
 
+        await self.audit_repo.log_action(
+            action="INVITATION_ACCEPTED",
+            entity_type="invitation",
+            entity_id=str(invitation.id),
+            user_id=accepting_user.id,
+            metadata_json={
+                "family_group_id": str(invitation.family_group_id)
+            },
+            ip_address=ip_address,
+            commit=True
+        )
+
         return await self.get_group_details(invitation.family_group_id, accepting_user.id)
 
     async def update_member_role(
@@ -181,7 +223,8 @@ class FamilyService:
         group_id: uuid.UUID,
         target_user_id: uuid.UUID,
         new_role: FamilyRole,
-        acting_admin: User
+        acting_admin: User,
+        ip_address: Optional[str] = None
     ) -> FamilyMemberResponse:
         target_membership = await self.family_repo.get_membership(group_id, target_user_id)
         if not target_membership:
@@ -198,6 +241,21 @@ class FamilyService:
 
         updated = await self.family_repo.update_member_role(group_id, target_user_id, new_role)
         target_user = await self.user_repo.get_by_id(target_user_id)
+
+        role_str = new_role.value if hasattr(new_role, "value") else str(new_role)
+        await self.audit_repo.log_action(
+            action="MEMBER_ROLE_CHANGED",
+            entity_type="family_member",
+            entity_id=str(target_user_id),
+            user_id=acting_admin.id,
+            metadata_json={
+                "family_group_id": str(group_id),
+                "new_role": role_str
+            },
+            ip_address=ip_address,
+            commit=True
+        )
+
         return FamilyMemberResponse(
             id=updated.id,
             user_id=target_user.id,
@@ -211,7 +269,8 @@ class FamilyService:
         self,
         group_id: uuid.UUID,
         target_user_id: uuid.UUID,
-        acting_admin: User
+        acting_admin: User,
+        ip_address: Optional[str] = None
     ) -> None:
         target_membership = await self.family_repo.get_membership(group_id, target_user_id)
         if not target_membership:
@@ -227,6 +286,17 @@ class FamilyService:
                 )
 
         await self.family_repo.remove_member(group_id, target_user_id)
+        await self.audit_repo.log_action(
+            action="MEMBER_REMOVED",
+            entity_type="family_member",
+            entity_id=str(target_user_id),
+            user_id=acting_admin.id,
+            metadata_json={
+                "family_group_id": str(group_id)
+            },
+            ip_address=ip_address,
+            commit=True
+        )
 
     async def leave_group(
         self,

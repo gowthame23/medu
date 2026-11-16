@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.deps import get_current_user
-from app.core.rate_limit import login_rate_limiter, register_rate_limiter, refresh_rate_limiter
+from app.core.rate_limit import login_rate_limiter, register_rate_limiter, refresh_rate_limiter, get_client_ip
 from app.models.user import User
 from app.services.auth import AuthService
 from app.schemas.user import (
@@ -66,10 +66,12 @@ async def login(
 ):
     service = AuthService(db)
     user_agent = request.headers.get("user-agent")
+    ip_addr = get_client_ip(request)
     token_resp, raw_refresh = await service.login(
         email=data.email,
         password=data.password,
-        user_agent=user_agent
+        user_agent=user_agent,
+        ip_address=ip_addr
     )
 
     # Set httpOnly refresh cookie
@@ -93,7 +95,12 @@ async def refresh_token(
 
     service = AuthService(db)
     user_agent = request.headers.get("user-agent")
-    token_resp, new_raw_refresh = await service.refresh_token(raw_token, user_agent=user_agent)
+    ip_addr = get_client_ip(request)
+    token_resp, new_raw_refresh = await service.refresh_token(
+        raw_token,
+        user_agent=user_agent,
+        ip_address=ip_addr
+    )
 
     # Only update cookie if a new token was issued (outside grace window)
     if new_raw_refresh:
@@ -123,28 +130,33 @@ async def logout(
 
 @router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
 async def logout_all(
+    request: Request,
     response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = AuthService(db)
-    await service.logout_all(current_user.id)
+    ip_addr = get_client_ip(request)
+    await service.logout_all(current_user.id, ip_address=ip_addr)
     response.delete_cookie("mend_refresh_token", path="/api/v1/auth")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
 async def change_password(
+    request: Request,
     data: ChangePasswordRequest,
     response: Response,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = AuthService(db)
+    ip_addr = get_client_ip(request)
     await service.change_password(
         user_id=current_user.id,
         current_password=data.current_password,
-        new_password=data.new_password
+        new_password=data.new_password,
+        ip_address=ip_addr
     )
     # Clear cookie since all refresh sessions are revoked
     response.delete_cookie("mend_refresh_token", path="/api/v1/auth")

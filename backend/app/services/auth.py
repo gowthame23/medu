@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
@@ -17,6 +18,7 @@ from app.core.errors import (
     TokenRevokedOrExpiredException,
 )
 from app.repositories.user import UserRepository
+from app.repositories.audit import AuditRepository
 from app.models.user import User, RefreshToken
 from app.schemas.user import TokenResponse, UserResponse
 
@@ -29,6 +31,7 @@ class AuthService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.user_repo = UserRepository(db)
+        self.audit_repo = AuditRepository(db)
 
     async def register(
         self,
@@ -65,15 +68,35 @@ class AuthService:
         self,
         email: str,
         password: str,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None
     ) -> Tuple[TokenResponse, str]:
+        email_hash = hashlib.sha256(email.lower().strip().encode("utf-8")).hexdigest()
         user = await self.user_repo.get_by_email(email)
         if not user:
             # Constant-time mitigation against user enumeration
             verify_password(password, DUMMY_ARGON2_HASH)
+            await self.audit_repo.log_action(
+                action="LOGIN_FAILURE",
+                entity_type="user",
+                entity_id=None,
+                user_id=None,
+                metadata_json={"email_hash": email_hash, "reason": "user_not_found"},
+                ip_address=ip_address,
+                commit=True
+            )
             raise AuthenticationFailedException("Invalid email or password")
 
         if not verify_password(password, user.password_hash):
+            await self.audit_repo.log_action(
+                action="LOGIN_FAILURE",
+                entity_type="user",
+                entity_id=str(user.id),
+                user_id=user.id,
+                metadata_json={"email_hash": email_hash, "reason": "invalid_credentials"},
+                ip_address=ip_address,
+                commit=True
+            )
             raise AuthenticationFailedException("Invalid email or password")
 
         await self.user_repo.update_last_login(user.id)
@@ -91,6 +114,16 @@ class AuthService:
             user_agent=user_agent
         )
 
+        await self.audit_repo.log_action(
+            action="LOGIN_SUCCESS",
+            entity_type="user",
+            entity_id=str(user.id),
+            user_id=user.id,
+            metadata_json={"email_hash": email_hash},
+            ip_address=ip_address,
+            commit=True
+        )
+
         token_resp = TokenResponse(
             access_token=access_token,
             token_type="bearer",
@@ -104,7 +137,8 @@ class AuthService:
     async def refresh_token(
         self,
         raw_refresh_token: str,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None
     ) -> Tuple[TokenResponse, str]:
         token_hash = hash_token(raw_refresh_token)
         token_record = await self.user_repo.get_refresh_token_by_hash(token_hash)
@@ -138,6 +172,15 @@ class AuthService:
 
             # Outside grace window or invalidated session: genuine reuse breach detected. Revoke all tokens!
             await self.user_repo.revoke_all_user_tokens(token_record.user_id)
+            await self.audit_repo.log_action(
+                action="REFRESH_TOKEN_REUSE_DETECTED",
+                entity_type="refresh_token",
+                entity_id=str(token_record.id),
+                user_id=token_record.user_id,
+                metadata_json={"reason": "revoked_token_reuse_outside_grace_window"},
+                ip_address=ip_address,
+                commit=True
+            )
             raise TokenRevokedOrExpiredException("Security violation: Revoked token reuse detected. All sessions invalidated.")
 
         # Check expiry
@@ -186,7 +229,13 @@ class AuthService:
             if token_record and token_record.revoked_at is None:
                 await self.user_repo.revoke_refresh_token(token_record.id)
 
-    async def change_password(self, user_id: uuid.UUID, current_password: str, new_password: str) -> None:
+    async def change_password(
+        self,
+        user_id: uuid.UUID,
+        current_password: str,
+        new_password: str,
+        ip_address: Optional[str] = None
+    ) -> None:
         user = await self.user_repo.get_by_id(user_id)
         if not user or not verify_password(current_password, user.password_hash):
             raise AuthenticationFailedException("Current password is incorrect")
@@ -194,6 +243,24 @@ class AuthService:
         await self.user_repo.update_password(user_id, new_hash)
         # Security: Revoke all refresh tokens so all sessions must re-authenticate
         await self.user_repo.revoke_all_user_tokens(user_id)
+        await self.audit_repo.log_action(
+            action="CHANGE_PASSWORD",
+            entity_type="user",
+            entity_id=str(user_id),
+            user_id=user_id,
+            metadata_json={},
+            ip_address=ip_address,
+            commit=True
+        )
 
-    async def logout_all(self, user_id: uuid.UUID) -> None:
+    async def logout_all(self, user_id: uuid.UUID, ip_address: Optional[str] = None) -> None:
         await self.user_repo.revoke_all_user_tokens(user_id)
+        await self.audit_repo.log_action(
+            action="LOGOUT_ALL",
+            entity_type="user",
+            entity_id=str(user_id),
+            user_id=user_id,
+            metadata_json={},
+            ip_address=ip_address,
+            commit=True
+        )

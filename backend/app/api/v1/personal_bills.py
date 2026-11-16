@@ -1,10 +1,11 @@
 import uuid
 from typing import List, Optional
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.rate_limit import get_client_ip
 from app.models.user import User
 from app.services.bill import BillService
 from app.services.payment import PaymentService
@@ -102,6 +103,7 @@ async def delete_personal_bill(
 @router.post("/{id}/pay", response_model=PaymentResponse)
 async def pay_personal_bill(
     id: uuid.UUID,
+    request: Request,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
@@ -110,32 +112,39 @@ async def pay_personal_bill(
         idempotency_key = f"key_{uuid.uuid4().hex}"
 
     service = PaymentService(db)
+    ip_addr = get_client_ip(request)
     return await service.pay_bill(
         bill_id=id,
         idempotency_key=idempotency_key,
         payer=current_user,
-        family_group_id=None
+        family_group_id=None,
+        ip_address=ip_addr
     )
 
 
 @router.post("/{id}/mark-paid", response_model=UpcomingRadarResponse)
 async def mark_personal_bill_paid(
     id: uuid.UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = BillService(db)
+    ip_addr = get_client_ip(request)
     return await service.mark_personal_bill_paid(
         user=current_user,
-        bill_id=id
+        bill_id=id,
+        ip_address=ip_addr
     )
 
 
 @router.post("/{id}/payment/cancel", response_model=PaymentResponse)
 async def cancel_personal_bill_payment(
     id: uuid.UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = PaymentService(db)
-    return await service.cancel_pending_payment(bill_id=id, user=current_user)
+    ip_addr = get_client_ip(request)
+    return await service.cancel_pending_payment(bill_id=id, user=current_user, ip_address=ip_addr)

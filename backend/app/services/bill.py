@@ -90,14 +90,16 @@ class BillService:
     async def mark_personal_bill_paid(
         self,
         user: User,
-        bill_id: uuid.UUID
+        bill_id: uuid.UUID,
+        ip_address: Optional[str] = None
     ) -> UpcomingRadarResponse:
         from app.services.payment import PaymentService
         payment_service = PaymentService(self.db)
         updated = await payment_service.settle_self_reported_payment(
             bill_id=bill_id,
             payer=user,
-            family_group_id=None
+            family_group_id=None,
+            ip_address=ip_address
         )
         return await self._enrich_bill_response(updated)
 
@@ -142,14 +144,16 @@ class BillService:
         self,
         family_group_id: uuid.UUID,
         bill_id: uuid.UUID,
-        user: User
+        user: User,
+        ip_address: Optional[str] = None
     ) -> UpcomingRadarResponse:
         from app.services.payment import PaymentService
         payment_service = PaymentService(self.db)
         updated = await payment_service.settle_self_reported_payment(
             bill_id=bill_id,
             payer=user,
-            family_group_id=family_group_id
+            family_group_id=family_group_id,
+            ip_address=ip_address
         )
         return await self._enrich_bill_response(updated)
 

@@ -14,6 +14,8 @@ from app.models.payment import PaymentTransaction, PaymentEvent
 from app.models.bill import UpcomingRadar
 from app.models.outbox import OutboxEvent
 from app.providers.sandbox_upi import SandboxUPIProvider
+from app.repositories.audit import AuditRepository
+from app.core.rate_limit import get_client_ip
 from app.schemas.payment import PaymentResponse
 from app.services.payment import PaymentService
 
@@ -64,11 +66,23 @@ async def payment_webhook(
     if not event_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing event_id")
 
+    audit_repo = AuditRepository(db)
+    client_ip = get_client_ip(request)
+
     # 1. Processed-Events Ledger Deduplication via indexed unique event_id
     ev_check = await db.execute(
         select(PaymentEvent).where(PaymentEvent.event_id == event_id)
     )
     if ev_check.scalar_one_or_none():
+        await audit_repo.log_action(
+            action="WEBHOOK_IGNORED",
+            entity_type="webhook_event",
+            entity_id=event_id,
+            user_id=None,
+            metadata_json={"reason": "already_processed", "event_type": event_type},
+            ip_address=client_ip,
+            commit=True
+        )
         return {"received": True, "status": "already_processed", "event_id": event_id}
 
     # 2. Locate matching PaymentTransaction with row lock
@@ -78,11 +92,29 @@ async def payment_webhook(
     elif payload.get("transaction_id"):
         txn_query = txn_query.where(PaymentTransaction.id == uuid.UUID(payload.get("transaction_id")))
     else:
+        await audit_repo.log_action(
+            action="WEBHOOK_IGNORED",
+            entity_type="webhook_event",
+            entity_id=event_id,
+            user_id=None,
+            metadata_json={"reason": "ignored_no_transaction_reference", "event_type": event_type},
+            ip_address=client_ip,
+            commit=True
+        )
         return {"received": True, "status": "ignored_no_transaction_reference"}
 
     txn_res = await db.execute(txn_query)
     txn = txn_res.scalar_one_or_none()
     if not txn:
+        await audit_repo.log_action(
+            action="WEBHOOK_IGNORED",
+            entity_type="webhook_event",
+            entity_id=event_id,
+            user_id=None,
+            metadata_json={"reason": "transaction_not_found", "event_type": event_type},
+            ip_address=client_ip,
+            commit=True
+        )
         return {"received": True, "status": "transaction_not_found"}
 
     # 3. Cryptographic & Business Amount Integrity Check
@@ -152,6 +184,15 @@ async def payment_webhook(
                 }
             )
             db.add(event_record)
+            await audit_repo.log_action(
+                action="WEBHOOK_IGNORED",
+                entity_type="webhook_event",
+                entity_id=event_id,
+                user_id=txn.paid_by_user_id,
+                metadata_json={"reason": "terminal_state_or_already_settled", "event_type": event_type},
+                ip_address=client_ip,
+                commit=False
+            )
             await db.commit()
             return {
                 "received": True,
@@ -200,6 +241,15 @@ async def payment_webhook(
                 detail={"action": "WEBHOOK_SUCCESS", "payload": payload}
             )
             db.add(event_record)
+            await audit_repo.log_action(
+                action="WEBHOOK_PROCESSED",
+                entity_type="webhook_event",
+                entity_id=event_id,
+                user_id=txn.paid_by_user_id,
+                metadata_json={"event_type": event_type, "transaction_id": str(txn.id)},
+                ip_address=client_ip,
+                commit=False
+            )
             await db.commit()
 
         elif event_type == "payment.failed":
@@ -216,6 +266,15 @@ async def payment_webhook(
                 detail={"action": "WEBHOOK_FAILED", "payload": payload}
             )
             db.add(event_record)
+            await audit_repo.log_action(
+                action="WEBHOOK_PROCESSED",
+                entity_type="webhook_event",
+                entity_id=event_id,
+                user_id=txn.paid_by_user_id,
+                metadata_json={"event_type": event_type, "transaction_id": str(txn.id)},
+                ip_address=client_ip,
+                commit=False
+            )
             await db.commit()
 
     except (IntegrityError, OperationalError):

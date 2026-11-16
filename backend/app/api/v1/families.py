@@ -1,11 +1,11 @@
 import uuid
 from typing import List, Tuple
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user, require_family_member, require_family_admin
-from app.core.rate_limit import invitation_accept_rate_limiter
+from app.core.rate_limit import invitation_accept_rate_limiter, get_client_ip
 from app.models.user import User
 from app.models.family import FamilyMember
 from app.services.family import FamilyService
@@ -88,12 +88,14 @@ async def list_family_members(
 async def invite_member(
     id: uuid.UUID,
     data: FamilyInviteRequest,
+    request: Request,
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_admin),
     db: AsyncSession = Depends(get_db)
 ):
     admin_user, _ = auth_data
     service = FamilyService(db)
-    return await service.invite_member(id, data.email, admin_user)
+    ip_addr = get_client_ip(request)
+    return await service.invite_member(id, data.email, admin_user, ip_address=ip_addr)
 
 
 @router.get("/families/{id}/invitations", response_model=List[FamilyInvitationResponse])
@@ -121,11 +123,13 @@ async def revoke_invitation(
 @router.post("/invitations/accept", response_model=FamilyGroupResponse, dependencies=[Depends(invitation_accept_rate_limiter)])
 async def accept_invitation(
     data: AcceptInvitationRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = FamilyService(db)
-    return await service.accept_invitation(data.token, current_user)
+    ip_addr = get_client_ip(request)
+    return await service.accept_invitation(data.token, current_user, ip_address=ip_addr)
 
 
 @router.patch("/families/{id}/members/{uid}", response_model=FamilyMemberResponse)
@@ -133,24 +137,28 @@ async def update_member_role(
     id: uuid.UUID,
     uid: uuid.UUID,
     data: MemberRoleUpdateRequest,
+    request: Request,
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_admin),
     db: AsyncSession = Depends(get_db)
 ):
     admin_user, _ = auth_data
     service = FamilyService(db)
-    return await service.update_member_role(id, uid, data.role, admin_user)
+    ip_addr = get_client_ip(request)
+    return await service.update_member_role(id, uid, data.role, admin_user, ip_address=ip_addr)
 
 
 @router.delete("/families/{id}/members/{uid}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
     id: uuid.UUID,
     uid: uuid.UUID,
+    request: Request,
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_admin),
     db: AsyncSession = Depends(get_db)
 ):
     admin_user, _ = auth_data
     service = FamilyService(db)
-    await service.remove_member(id, uid, admin_user)
+    ip_addr = get_client_ip(request)
+    await service.remove_member(id, uid, admin_user, ip_address=ip_addr)
 
 
 @router.post("/families/{id}/leave", status_code=status.HTTP_204_NO_CONTENT)

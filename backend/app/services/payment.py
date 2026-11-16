@@ -18,6 +18,7 @@ from app.models.outbox import OutboxEvent
 from app.models.audit import AuditLog
 from app.models.user import User
 from app.repositories.payment import PaymentRepository
+from app.repositories.audit import AuditRepository
 from app.providers.sandbox_upi import SandboxUPIProvider
 from app.schemas.payment import PaymentResponse
 
@@ -26,6 +27,7 @@ class PaymentService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.payment_repo = PaymentRepository(db)
+        self.audit_repo = AuditRepository(db)
         self.provider = SandboxUPIProvider()
 
     async def pay_bill(
@@ -34,7 +36,8 @@ class PaymentService:
         idempotency_key: str,
         payer: User,
         family_group_id: Optional[uuid.UUID] = None,
-        force_failure: bool = False
+        force_failure: bool = False,
+        ip_address: Optional[str] = None
     ) -> PaymentResponse:
         now = datetime.now(timezone.utc)
 
@@ -162,6 +165,20 @@ class PaymentService:
                 dedupe_key=f"payment:{txn.id}:event"
             )
             self.db.add(outbox_event)
+
+            # Audit log: PAYMENT_SUCCESS (ids and provider only)
+            await self.audit_repo.log_action(
+                action="PAYMENT_SUCCESS",
+                entity_type="payment",
+                entity_id=str(finalized_txn.id),
+                user_id=payer.id,
+                metadata_json={
+                    "bill_id": str(bill.id),
+                    "provider": finalized_txn.provider or "SANDBOX_UPI"
+                },
+                ip_address=ip_address,
+                commit=False
+            )
             await self.db.commit()
 
             return PaymentResponse(
@@ -182,6 +199,19 @@ class PaymentService:
                 new_status="FAILED",
                 failure_reason=provider_result.failure_reason,
                 provider_intent_id=intent.intent_id
+            )
+            # Audit log: PAYMENT_FAILED (ids and reason only)
+            await self.audit_repo.log_action(
+                action="PAYMENT_FAILED",
+                entity_type="payment",
+                entity_id=str(finalized_txn.id),
+                user_id=payer.id,
+                metadata_json={
+                    "bill_id": str(bill.id),
+                    "reason": provider_result.failure_reason or "PAYMENT_FAILED"
+                },
+                ip_address=ip_address,
+                commit=True
             )
             return PaymentResponse(
                 transaction_id=finalized_txn.id,
@@ -222,7 +252,8 @@ class PaymentService:
         self,
         bill_id: uuid.UUID,
         payer: User,
-        family_group_id: Optional[uuid.UUID] = None
+        family_group_id: Optional[uuid.UUID] = None,
+        ip_address: Optional[str] = None
     ) -> UpcomingRadar:
         now = datetime.now(timezone.utc)
 
@@ -310,6 +341,20 @@ class PaymentService:
         )
         self.db.add(outbox_event)
 
+        # Audit log: BILL_MARKED_PAID (ids and status only)
+        await self.audit_repo.log_action(
+            action="BILL_MARKED_PAID",
+            entity_type="bill",
+            entity_id=str(bill.id),
+            user_id=payer.id,
+            metadata_json={
+                "status": "PAID_UNVERIFIED",
+                "family_group_id": str(family_group_id) if family_group_id else None
+            },
+            ip_address=ip_address,
+            commit=False
+        )
+
         await self.db.commit()
         await self.db.refresh(bill)
         return bill
@@ -318,7 +363,8 @@ class PaymentService:
         self,
         bill_id: uuid.UUID,
         user: User,
-        family_group_id: Optional[uuid.UUID] = None
+        family_group_id: Optional[uuid.UUID] = None,
+        ip_address: Optional[str] = None
     ) -> PaymentResponse:
         # Confirm bill existence and ownership
         query = select(UpcomingRadar).where(
@@ -345,6 +391,21 @@ class PaymentService:
             new_status="FAILED",
             failure_reason="CANCELLED_BY_USER"
         )
+
+        # Audit log: PAYMENT_CANCELLED
+        await self.audit_repo.log_action(
+            action="PAYMENT_CANCELLED",
+            entity_type="payment",
+            entity_id=str(finalized.id),
+            user_id=user.id,
+            metadata_json={
+                "bill_id": str(bill_id),
+                "reason": "CANCELLED_BY_USER"
+            },
+            ip_address=ip_address,
+            commit=True
+        )
+
         return PaymentResponse(
             transaction_id=finalized.id,
             bill_id=bill_id,

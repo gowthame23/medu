@@ -5,6 +5,19 @@ from fastapi import Request, HTTPException, status
 from app.core.config import settings
 
 
+def get_client_ip(request: Request) -> str:
+    """Extract client IP, validating X-Forwarded-For against TRUSTED_PROXIES."""
+    remote_host = request.client.host if request.client else "unknown"
+    trusted = getattr(settings, "TRUSTED_PROXIES", ["127.0.0.1", "::1"])
+    if remote_host in trusted:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+            if parts:
+                return parts[-1]
+    return remote_host
+
+
 class InMemoryRateLimiter:
     """Sliding-window bounded in-memory rate limiter with trusted proxy validation."""
     def __init__(self, requests_per_minute: int, key_prefix: str = "", max_tracked_keys: int = 10000):
@@ -15,17 +28,7 @@ class InMemoryRateLimiter:
         self._requests: OrderedDict[str, List[float]] = OrderedDict()
 
     def _resolve_client_ip(self, request: Request) -> str:
-        remote_host = request.client.host if request.client else "unknown"
-        # ONLY trust X-Forwarded-For if the direct connecting client is a configured trusted proxy
-        trusted = getattr(settings, "TRUSTED_PROXIES", ["127.0.0.1", "::1"])
-        if remote_host in trusted:
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                # The last proxy in the chain is the one that directly forwarded to our trusted proxy
-                parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-                if parts:
-                    return parts[-1]
-        return remote_host
+        return get_client_ip(request)
 
     async def __call__(self, request: Request):
         # Allow disabling rate limiter during standard unit test suites unless explicitly tested

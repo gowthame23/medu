@@ -1,10 +1,11 @@
 import uuid
 from typing import List, Tuple, Optional
-from fastapi import APIRouter, Depends, Header, status
+from fastapi import APIRouter, Depends, Header, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import require_family_member, require_family_admin
+from app.core.rate_limit import get_client_ip
 from app.models.user import User
 from app.models.family import FamilyMember
 from app.services.bill import BillService
@@ -114,6 +115,7 @@ async def delete_family_bill(
 async def pay_family_bill(
     id: uuid.UUID,
     bid: uuid.UUID,
+    request: Request,
     idempotency_key: Optional[str] = Header(None, alias="Idempotency-Key"),
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
     db: AsyncSession = Depends(get_db)
@@ -123,11 +125,13 @@ async def pay_family_bill(
         idempotency_key = f"key_{uuid.uuid4().hex}"
 
     service = PaymentService(db)
+    ip_addr = get_client_ip(request)
     return await service.pay_bill(
         bill_id=bid,
         idempotency_key=idempotency_key,
         payer=payer,
-        family_group_id=id
+        family_group_id=id,
+        ip_address=ip_addr
     )
 
 
@@ -135,15 +139,18 @@ async def pay_family_bill(
 async def mark_family_bill_paid(
     id: uuid.UUID,
     bid: uuid.UUID,
+    request: Request,
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
     db: AsyncSession = Depends(get_db)
 ):
     payer, _ = auth_data
     service = BillService(db)
+    ip_addr = get_client_ip(request)
     return await service.mark_family_bill_paid(
         family_group_id=id,
         bill_id=bid,
-        user=payer
+        user=payer,
+        ip_address=ip_addr
     )
 
 
@@ -151,15 +158,18 @@ async def mark_family_bill_paid(
 async def cancel_family_bill_payment(
     id: uuid.UUID,
     bid: uuid.UUID,
+    request: Request,
     auth_data: Tuple[User, FamilyMember] = Depends(require_family_member),
     db: AsyncSession = Depends(get_db)
 ):
     payer, _ = auth_data
     service = PaymentService(db)
+    ip_addr = get_client_ip(request)
     return await service.cancel_pending_payment(
         bill_id=bid,
         user=payer,
-        family_group_id=id
+        family_group_id=id,
+        ip_address=ip_addr
     )
 
 
