@@ -22,8 +22,9 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # Use configured DATABASE_URL from alembic config or settings
-if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+env_db_url = os.getenv("DATABASE_URL") or settings.DATABASE_URL
+if not config.get_main_option("sqlalchemy.url") or "driver://user:pass" in (config.get_main_option("sqlalchemy.url") or ""):
+    config.set_main_option("sqlalchemy.url", env_db_url)
 
 
 def run_migrations_offline() -> None:
@@ -51,7 +52,9 @@ def do_run_migrations(connection):
 
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    db_url = config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
+    db_url = os.getenv("DATABASE_URL") or config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
+    if "driver://user:pass" in db_url:
+        db_url = settings.DATABASE_URL
     if db_url.startswith("sqlite://"):
         db_url = db_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
     elif db_url.startswith("postgresql://"):

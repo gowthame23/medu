@@ -23,6 +23,7 @@ if TEST_DB_ENV and not TEST_DB_ENV.startswith("sqlite"):
         TEST_DB_ENV = TEST_DB_ENV.replace("postgresql://", "postgresql+asyncpg://", 1)
     test_async_engine = create_async_engine(
         TEST_DB_ENV,
+        poolclass=NullPool,
         echo=False,
         future=True
     )
