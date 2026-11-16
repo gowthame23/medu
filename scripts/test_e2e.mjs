@@ -29,15 +29,13 @@ async function runE2E() {
   console.log("==================================================");
 
   console.log("[1/6] Starting FastAPI backend on :8000...");
-  const backend = spawn("python", ["-m", "uvicorn", "app.main:app", "--port", "8000"], {
+  const pythonCmd = process.platform === "win32" ? "python.exe" : "python";
+  const backend = spawn(pythonCmd, ["-m", "uvicorn", "app.main:app", "--port", "8000"], {
     cwd: "./backend",
-    shell: true,
   });
 
   console.log("[2/6] Starting Next.js production server on :3000...");
-  const frontend = spawn("npm", ["run", "start"], {
-    shell: true,
-  });
+  const frontend = spawn(process.execPath, ["./node_modules/next/dist/bin/next", "start"]);
 
   let browser;
   try {
