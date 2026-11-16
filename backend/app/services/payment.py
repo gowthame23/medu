@@ -11,6 +11,8 @@ from app.core.errors import (
     ConflictException,
     ResourceNotFoundException,
     ForbiddenException,
+    EmailNotVerifiedException,
+    PhoneNotVerifiedException,
 )
 from app.models.bill import UpcomingRadar
 from app.models.payment import PaymentTransaction, PaymentEvent
@@ -39,6 +41,12 @@ class PaymentService:
         force_failure: bool = False,
         ip_address: Optional[str] = None
     ) -> PaymentResponse:
+        # Gating check: verification requirements for payment initiation
+        if settings.REQUIRE_EMAIL_VERIFICATION_FOR_PAYMENTS and not payer.email_verified:
+            raise EmailNotVerifiedException("Email verification is required before initiating payments.")
+        if settings.REQUIRE_PHONE_VERIFICATION_FOR_PAYMENTS and not payer.phone_verified:
+            raise PhoneNotVerifiedException("Phone verification is required before initiating payments.")
+
         now = datetime.now(timezone.utc)
 
         # -------------------------------------------------------------
@@ -255,6 +263,12 @@ class PaymentService:
         family_group_id: Optional[uuid.UUID] = None,
         ip_address: Optional[str] = None
     ) -> UpcomingRadar:
+        # Gating check: verification requirements for mark-paid
+        if settings.REQUIRE_EMAIL_VERIFICATION_FOR_PAYMENTS and not payer.email_verified:
+            raise EmailNotVerifiedException("Email verification is required before marking bills as paid.")
+        if settings.REQUIRE_PHONE_VERIFICATION_FOR_PAYMENTS and not payer.phone_verified:
+            raise PhoneNotVerifiedException("Phone verification is required before marking bills as paid.")
+
         now = datetime.now(timezone.utc)
 
         # 1. Row-lock bill and ensure not soft-deleted

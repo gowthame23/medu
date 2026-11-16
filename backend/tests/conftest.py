@@ -1,5 +1,6 @@
 import asyncio
 import uuid
+from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
@@ -104,13 +105,24 @@ async def db_session():
 
 @pytest_asyncio.fixture
 async def create_user_fixture():
-    async def _create(email: str, display_name: str, password: str = "SecurePass123!") -> tuple[User, str]:
+    async def _create(
+        email: str,
+        display_name: str,
+        password: str = "SecurePass123!",
+        email_verified: bool = True,
+        phone_e164: Optional[str] = None,
+        phone_verified: bool = False
+    ) -> tuple[User, str]:
+        now = datetime.now(timezone.utc)
         async with TestAsyncSessionLocal() as session:
             user = User(
                 email=email.lower(),
                 password_hash=hash_password(password),
                 display_name=display_name,
-                is_active=True
+                is_active=True,
+                email_verified_at=now if email_verified else None,
+                phone_e164=phone_e164,
+                phone_verified_at=now if phone_verified else None
             )
             session.add(user)
             await session.commit()

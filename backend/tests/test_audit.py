@@ -442,7 +442,7 @@ async def test_audit_loans_lifecycle(client: AsyncClient, create_user_fixture):
 @pytest.mark.asyncio
 async def test_audit_verification_actions_and_redaction(client: AsyncClient, create_user_fixture):
     """Verifies that verification lifecycle events generate properly redacted audit rows."""
-    user, token = await create_user_fixture("verif_audit@example.com", "Verif User")
+    user, token = await create_user_fixture("verif_audit@example.com", "Verif User", email_verified=False)
     headers = {"Authorization": f"Bearer {token}", "Origin": "http://testserver"}
 
     # 1. Send email verification -> VERIFICATION_SENT

@@ -221,7 +221,7 @@ def test_production_guards_against_insecure_secrets():
 @pytest.mark.asyncio
 async def test_users_me_verification_status(client: AsyncClient, create_user_fixture):
     """Asserts that GET /users/me and GET /me expose email_verified and phone_verified booleans."""
-    user, token = await create_user_fixture("status_check@example.com", "Status User")
+    user, token = await create_user_fixture("status_check@example.com", "Status User", email_verified=False)
     headers = {"Authorization": f"Bearer {token}", "Origin": "http://testserver"}
 
     # Initially unverified
