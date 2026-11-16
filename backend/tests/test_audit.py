@@ -11,7 +11,7 @@ from app.models.audit import AuditLog
 from app.models.bill import UpcomingRadar
 from app.models.payment import PaymentTransaction
 from app.models.user import RefreshToken
-from app.core.security import generate_secure_token, hash_token
+from app.core.security import generate_secure_token, hash_token, hash_audit_email
 from app.providers.sandbox_upi import SandboxUPIProvider
 from app.core.config import settings
 from tests.conftest import TestAsyncSessionLocal
@@ -20,8 +20,8 @@ from tests.conftest import TestAsyncSessionLocal
 @pytest.mark.asyncio
 async def test_audit_login_success_and_failure(client: AsyncClient, create_user_fixture):
     user, _ = await create_user_fixture("audit_user@example.com", "Audit User", "Password123!")
-    user_email_hash = hashlib.sha256("audit_user@example.com".encode("utf-8")).hexdigest()
-    unknown_email_hash = hashlib.sha256("unknown@example.com".encode("utf-8")).hexdigest()
+    user_email_hash = hash_audit_email("audit_user@example.com")
+    unknown_email_hash = hash_audit_email("unknown@example.com")
 
     # 1. Login failure: unknown user
     res_fail1 = await client.post("/api/v1/auth/login", json={
@@ -89,8 +89,11 @@ async def test_audit_refresh_reuse_and_lifecycle(client: AsyncClient, create_use
     access_token = login_res.json()["access_token"]
     auth_header = {"Authorization": f"Bearer {access_token}"}
 
+    # Set cookie directly on client instance to eliminate httpx deprecation warning
+    client.cookies.set("mend_refresh_token", cookie_token)
+
     # First refresh: normal rotation
-    ref1 = await client.post("/api/v1/auth/refresh", cookies={"mend_refresh_token": cookie_token})
+    ref1 = await client.post("/api/v1/auth/refresh")
     assert ref1.status_code == 200
 
     # Simulate expired grace window on original token
@@ -103,7 +106,8 @@ async def test_audit_refresh_reuse_and_lifecycle(client: AsyncClient, create_use
         await session.commit()
 
     # Replay old token outside grace window -> reuse detected
-    ref_reuse = await client.post("/api/v1/auth/refresh", cookies={"mend_refresh_token": cookie_token})
+    client.cookies.set("mend_refresh_token", cookie_token)
+    ref_reuse = await client.post("/api/v1/auth/refresh")
     assert ref_reuse.status_code == 401
 
     # Change password
@@ -196,7 +200,7 @@ async def test_audit_family_invitations_and_members(client: AsyncClient, create_
         assert inv_log.user_id == admin_user.id
         assert inv_log.entity_id == invitation_id
         assert inv_log.metadata_json.get("family_group_id") == group_id
-        assert inv_log.metadata_json.get("email_hash") == hashlib.sha256("family_member@example.com".encode("utf-8")).hexdigest()
+        assert inv_log.metadata_json.get("email_hash") == hash_audit_email("family_member@example.com")
         assert inv_log.ip_address == "198.51.100.1"
 
         # Check INVITATION_ACCEPTED
@@ -386,6 +390,53 @@ async def test_audit_webhooks(client: AsyncClient, create_user_fixture):
         assert ign_log is not None
         assert ign_log.entity_id == event_id
         assert ign_log.metadata_json.get("reason") == "already_processed"
+
+
+@pytest.mark.asyncio
+async def test_audit_loans_lifecycle(client: AsyncClient, create_user_fixture):
+    user, token = await create_user_fixture("loan_audit@example.com", "Loan Audit")
+    headers = {"Authorization": f"Bearer {token}", "X-Forwarded-For": "198.51.100.99"}
+
+    # 1. Create loan
+    create_res = await client.post(
+        "/api/v1/loans",
+        json={
+            "loan_name": "Personal Secret Loan",
+            "principal_amount": "50000.00",
+            "interest_rate": "10.5",
+            "tenure_months": 24,
+            "start_date": "2026-01-01"
+        },
+        headers=headers
+    )
+    assert create_res.status_code == 201
+    loan_id = create_res.json()["id"]
+
+    # 2. Delete loan
+    del_res = await client.delete(f"/api/v1/loans/{loan_id}", headers=headers)
+    assert del_res.status_code == 204
+
+    async with TestAsyncSessionLocal() as session:
+        # Check LOAN_CREATED
+        created_log = (await session.execute(
+            select(AuditLog).where(AuditLog.action == "LOAN_CREATED")
+        )).scalar_one_or_none()
+        assert created_log is not None
+        assert created_log.user_id == user.id
+        assert created_log.entity_id == loan_id
+        # Strict redaction: metadata_json must be empty or contain only ids, never loan names/amounts
+        assert created_log.metadata_json == {}
+        assert created_log.ip_address == "198.51.100.99"
+
+        # Check LOAN_DELETED
+        deleted_log = (await session.execute(
+            select(AuditLog).where(AuditLog.action == "LOAN_DELETED")
+        )).scalar_one_or_none()
+        assert deleted_log is not None
+        assert deleted_log.user_id == user.id
+        assert deleted_log.entity_id == loan_id
+        assert deleted_log.metadata_json == {}
+        assert deleted_log.ip_address == "198.51.100.99"
 
 
 @pytest.mark.asyncio

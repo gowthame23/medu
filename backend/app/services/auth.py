@@ -11,6 +11,7 @@ from app.core.security import (
     create_access_token,
     generate_secure_token,
     hash_token,
+    hash_audit_email,
 )
 from app.core.errors import (
     AuthenticationFailedException,
@@ -71,7 +72,7 @@ class AuthService:
         user_agent: Optional[str] = None,
         ip_address: Optional[str] = None
     ) -> Tuple[TokenResponse, str]:
-        email_hash = hashlib.sha256(email.lower().strip().encode("utf-8")).hexdigest()
+        email_hash = hash_audit_email(email)
         user = await self.user_repo.get_by_email(email)
         if not user:
             # Constant-time mitigation against user enumeration

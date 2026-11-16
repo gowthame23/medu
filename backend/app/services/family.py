@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import generate_secure_token, hash_token
+from app.core.security import generate_secure_token, hash_token, hash_audit_email
 from app.core.errors import (
     ConflictException,
     ForbiddenException,
@@ -128,7 +128,7 @@ class FamilyService:
             expires_at=expires_at
         )
 
-        email_hash = hashlib.sha256(email.lower().strip().encode("utf-8")).hexdigest()
+        email_hash = hash_audit_email(email)
         await self.audit_repo.log_action(
             action="INVITATION_CREATED",
             entity_type="invitation",

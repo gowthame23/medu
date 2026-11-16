@@ -1,10 +1,11 @@
 import uuid
 from typing import List
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.rate_limit import get_client_ip
 from app.models.user import User
 from app.services.liability import LiabilityService
 from app.schemas.liability import (
@@ -36,17 +37,20 @@ async def list_loans(
 @router.post("", response_model=LoanResponse, status_code=status.HTTP_201_CREATED)
 async def create_loan(
     data: LoanCreateRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = LiabilityService(db)
+    ip_addr = get_client_ip(request)
     return await service.create_loan(
         user_id=current_user.id,
         loan_name=data.loan_name,
         principal_amount=data.principal_amount,
         interest_rate=data.interest_rate,
         tenure_months=data.tenure_months,
-        start_date=data.start_date
+        start_date=data.start_date,
+        ip_address=ip_addr
     )
 
 
@@ -104,11 +108,13 @@ async def simulate_prepayment(
 @router.delete("/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_loan(
     id: uuid.UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     service = LiabilityService(db)
-    await service.liability_repo.delete_loan(current_user.id, id)
+    ip_addr = get_client_ip(request)
+    await service.delete_loan(current_user.id, id, ip_address=ip_addr)
 
 
 @router.patch("/{id}", response_model=LoanResponse)

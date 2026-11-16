@@ -36,6 +36,13 @@ def hash_token(raw_token: str) -> str:
     return hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
 
+def hash_audit_email(email: str) -> str:
+    """Computes an HMAC-SHA256 of the email, keyed by a value derived from SECRET_KEY (not raw key)."""
+    import hmac
+    derived_key = hashlib.sha256((settings.SECRET_KEY + ":audit_email_salt").encode("utf-8")).digest()
+    return hmac.new(derived_key, email.lower().strip().encode("utf-8"), hashlib.sha256).hexdigest()
+
+
 def generate_secure_token(length_bytes: int = 32) -> Tuple[str, str]:
     """Generates a random token and returns (raw_token, token_hash)."""
     raw_token = secrets.token_urlsafe(length_bytes)

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ResourceNotFoundException
 from app.models.liability import LiabilitiesVault
 from app.repositories.liability import LiabilityRepository
+from app.repositories.audit import AuditRepository
 from app.schemas.liability import (
     LoanResponse,
     LoanUpdateRequest,
@@ -109,6 +110,7 @@ class LiabilityService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.liability_repo = LiabilityRepository(db)
+        self.audit_repo = AuditRepository(db)
 
     async def create_loan(
         self,
@@ -118,7 +120,8 @@ class LiabilityService:
         interest_rate: Decimal,
         tenure_months: int,
         start_date: Optional[date] = None,
-        currency: str = "INR"
+        currency: str = "INR",
+        ip_address: Optional[str] = None
     ) -> LoanResponse:
         s_date = start_date or date.today()
         emi = calculate_monthly_emi(principal_amount, interest_rate, tenure_months)
@@ -133,6 +136,15 @@ class LiabilityService:
             monthly_emi=emi,
             currency=currency
         )
+        await self.audit_repo.log_action(
+            action="LOAN_CREATED",
+            entity_type="loan",
+            entity_id=str(loan.id),
+            user_id=user_id,
+            metadata_json={},
+            ip_address=ip_address,
+            commit=True
+        )
         return LoanResponse(
             id=loan.id,
             loan_name=loan.loan_name,
@@ -144,6 +156,26 @@ class LiabilityService:
             monthly_emi=loan.monthly_emi,
             currency=loan.currency,
             created_at=loan.created_at
+        )
+
+    async def delete_loan(
+        self,
+        user_id: uuid.UUID,
+        loan_id: uuid.UUID,
+        ip_address: Optional[str] = None
+    ) -> None:
+        loan = await self.liability_repo.get_loan_by_id(user_id, loan_id)
+        if not loan:
+            raise ResourceNotFoundException("Loan", "Loan not found in private vault")
+        await self.liability_repo.delete_loan(user_id, loan_id)
+        await self.audit_repo.log_action(
+            action="LOAN_DELETED",
+            entity_type="loan",
+            entity_id=str(loan_id),
+            user_id=user_id,
+            metadata_json={},
+            ip_address=ip_address,
+            commit=True
         )
 
     async def get_loans(self, user_id: uuid.UUID) -> List[LoanResponse]:
