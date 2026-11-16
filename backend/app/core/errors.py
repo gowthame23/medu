@@ -85,6 +85,33 @@ class RateLimitExceededException(MendAppException):
         )
 
 
+class InvalidOrExpiredCodeException(MendAppException):
+    def __init__(self, message: str = "Invalid or expired verification code"):
+        super().__init__(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            code="INVALID_OR_EXPIRED_CODE",
+            message=message,
+        )
+
+
+class EmailNotVerifiedException(MendAppException):
+    def __init__(self, message: str = "Email verification required for payments"):
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="EMAIL_NOT_VERIFIED",
+            message=message,
+        )
+
+
+class PhoneNotVerifiedException(MendAppException):
+    def __init__(self, message: str = "Phone verification required for payments"):
+        super().__init__(
+            status_code=status.HTTP_403_FORBIDDEN,
+            code="PHONE_NOT_VERIFIED",
+            message=message,
+        )
+
+
 class UnprocessableFinancialEntityException(MendAppException):
     def __init__(self, message: str):
         super().__init__(

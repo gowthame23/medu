@@ -68,3 +68,4 @@ login_rate_limiter = InMemoryRateLimiter(settings.RATE_LIMIT_LOGIN_PER_MIN, "aut
 register_rate_limiter = InMemoryRateLimiter(settings.RATE_LIMIT_REGISTER_PER_MIN, "auth:register", settings.RATE_LIMIT_MAX_TRACKED_IPS)
 refresh_rate_limiter = InMemoryRateLimiter(settings.RATE_LIMIT_REFRESH_PER_MIN, "auth:refresh", settings.RATE_LIMIT_MAX_TRACKED_IPS)
 invitation_accept_rate_limiter = InMemoryRateLimiter(settings.RATE_LIMIT_INVITE_ACCEPT_PER_MIN, "invites:accept", settings.RATE_LIMIT_MAX_TRACKED_IPS)
+verification_rate_limiter = InMemoryRateLimiter(30, "verification", settings.RATE_LIMIT_MAX_TRACKED_IPS)

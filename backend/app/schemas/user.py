@@ -51,6 +51,9 @@ class UserResponse(StrictBaseModel):
     timezone: str
     is_active: bool
     created_at: datetime
+    email_verified: bool = False
+    phone_verified: bool = False
+    phone_e164: Optional[str] = None
 
 
 class UserUpdateRequest(StrictBaseModel):

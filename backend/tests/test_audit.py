@@ -440,6 +440,68 @@ async def test_audit_loans_lifecycle(client: AsyncClient, create_user_fixture):
 
 
 @pytest.mark.asyncio
+async def test_audit_verification_actions_and_redaction(client: AsyncClient, create_user_fixture):
+    """Verifies that verification lifecycle events generate properly redacted audit rows."""
+    user, token = await create_user_fixture("verif_audit@example.com", "Verif User")
+    headers = {"Authorization": f"Bearer {token}", "Origin": "http://testserver"}
+
+    # 1. Send email verification -> VERIFICATION_SENT
+    res = await client.post("/api/v1/verification/email/send", headers=headers)
+    assert res.status_code == 202
+
+    # Get test code
+    code_res = await client.get("/api/v1/verification/test-last-code?channel=email", headers=headers)
+    correct_code = code_res.json()["code"]
+
+    # 2. Wrong code 4 times -> VERIFICATION_FAILED
+    for _ in range(4):
+        fail_res = await client.post("/api/v1/verification/email/confirm", json={"code": "000000"}, headers=headers)
+        assert fail_res.status_code == 400
+
+    # 3. 5th wrong attempt -> VERIFICATION_LOCKED
+    lock_res = await client.post("/api/v1/verification/email/confirm", json={"code": "000000"}, headers=headers)
+    assert lock_res.status_code == 400
+
+    # 4. New challenge and confirm -> VERIFICATION_CONFIRMED
+    # Clear cooldown by updating created_at in DB
+    from datetime import datetime, timezone, timedelta
+    from app.models.verification import VerificationChallenge
+    async with TestAsyncSessionLocal() as session:
+        challenges = (await session.execute(
+            select(VerificationChallenge).where(VerificationChallenge.user_id == user.id)
+        )).scalars().all()
+        for c in challenges:
+            c.created_at = datetime.now(timezone.utc) - timedelta(seconds=120)
+        await session.commit()
+
+    res2 = await client.post("/api/v1/verification/email/send", headers=headers)
+    assert res2.status_code == 202
+    new_code = (await client.get("/api/v1/verification/test-last-code?channel=email", headers=headers)).json()["code"]
+
+    confirm_res = await client.post("/api/v1/verification/email/confirm", json={"code": new_code}, headers=headers)
+    assert confirm_res.status_code == 200
+
+    # 5. Check audit rows for all 4 verification actions
+    async with TestAsyncSessionLocal() as session:
+        logs_res = await session.execute(
+            select(AuditLog).where(AuditLog.user_id == user.id, AuditLog.entity_type == "VERIFICATION")
+        )
+        ver_logs = logs_res.scalars().all()
+        actions = {l.action for l in ver_logs}
+        assert "VERIFICATION_SENT" in actions
+        assert "VERIFICATION_FAILED" in actions
+        assert "VERIFICATION_LOCKED" in actions
+        assert "VERIFICATION_CONFIRMED" in actions
+
+        for l in ver_logs:
+            meta = l.metadata_json or {}
+            # Assert no plaintext OTP code, no raw email, no raw phone
+            assert correct_code not in json.dumps(meta)
+            assert new_code not in json.dumps(meta)
+            assert "verif_audit@example.com" not in json.dumps(meta)
+
+
+@pytest.mark.asyncio
 async def test_audit_metadata_strict_redaction_across_all_logs(client: AsyncClient, create_user_fixture):
     """
     Asserts that across the database, no audit row contains passwords, tokens,

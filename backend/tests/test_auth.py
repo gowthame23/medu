@@ -216,3 +216,34 @@ def test_production_guards_against_insecure_secrets():
             EMAIL_PROVIDER="smtp",
             SMS_PROVIDER="console"
         )
+
+
+@pytest.mark.asyncio
+async def test_users_me_verification_status(client: AsyncClient, create_user_fixture):
+    """Asserts that GET /users/me and GET /me expose email_verified and phone_verified booleans."""
+    user, token = await create_user_fixture("status_check@example.com", "Status User")
+    headers = {"Authorization": f"Bearer {token}", "Origin": "http://testserver"}
+
+    # Initially unverified
+    res1 = await client.get("/api/v1/users/me", headers=headers)
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert data1["email_verified"] is False
+    assert data1["phone_verified"] is False
+
+    res_alias = await client.get("/api/v1/me", headers=headers)
+    assert res_alias.status_code == 200
+    assert res_alias.json()["email_verified"] is False
+
+    # Send and confirm email
+    await client.post("/api/v1/verification/email/send", headers=headers)
+    code_res = await client.get("/api/v1/verification/test-last-code?channel=email", headers=headers)
+    code = code_res.json()["code"]
+    await client.post("/api/v1/verification/email/confirm", json={"code": code}, headers=headers)
+
+    # Now email_verified is True
+    res2 = await client.get("/api/v1/users/me", headers=headers)
+    assert res2.status_code == 200
+    data2 = res2.json()
+    assert data2["email_verified"] is True
+    assert data2["phone_verified"] is False

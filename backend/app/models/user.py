@@ -34,6 +34,14 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     phone_e164: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     phone_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    @property
+    def email_verified(self) -> bool:
+        return self.email_verified_at is not None
+
+    @property
+    def phone_verified(self) -> bool:
+        return self.phone_verified_at is not None
+
     # Relationships
     refresh_tokens: Mapped[List["RefreshToken"]] = relationship(
         "RefreshToken", back_populates="user", cascade="all, delete-orphan"

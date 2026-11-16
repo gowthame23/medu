@@ -7,6 +7,7 @@ from app.repositories.liability import LiabilityRepository
 from app.repositories.notification import NotificationRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.outbox import OutboxRepository
+from app.repositories.verification import VerificationRepository
 
 __all__ = [
     "UserRepository",
@@ -19,4 +20,5 @@ __all__ = [
     "NotificationRepository",
     "AuditRepository",
     "OutboxRepository",
+    "VerificationRepository",
 ]
