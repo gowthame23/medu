@@ -226,3 +226,51 @@
   - Backend Pytest test suite: 7/7 passed in 1.53s (100% green).
   - Master blueprint updated at `mend_complete_system_blueprint.md`.
   - Initial repository pushed to `https://github.com/gowthame23/medu` with `gowthame23` as sole contributor.
+
+
+### **Session 7 — 2026-11-16 (FastAPI Consolidation, Full Security Hardening & Verified Commit)**
+- **User Directives Addressed**:
+  1. **Consolidation on Single Authoritative Backend**:
+     - Deleted legacy Next.js mock API routes (`src/app/api/*`), in-memory store (`src/lib/dataStore.ts`), duplicate Express server (`server/index.js`), and unused Prisma schema (`prisma/`).
+     - Established FastAPI core (`/api/v1`) as the single source of truth for all business logic, financial math, and authentication.
+     - Created typed API client `src/lib/api.ts` with in-memory access tokens (never stored in localStorage) and silent refresh on mount.
+     - Rewired Next.js `rewrites()` in `next.config.ts` to proxy `/api/v1/*` to the FastAPI backend, preserving a single-origin perimeter.
+     - Added real authentication UI (`/login` and `/register`) and application `AuthContext`.
+  2. **Security & Cryptographic Hardening**:
+     - Implemented 30-second concurrency grace window on refresh token rotation to accommodate React StrictMode without session revocation.
+     - Guarded `WEBHOOK_SECRET` and `SECRET_KEY` with production validators: refuses startup if default dev values or keys < 32 chars are detected in production.
+     - Added cryptographic amount check to webhook handler: payload `amount` must match `txn.amount` exactly or raises HTTP 400.
+     - Upgraded payment event deduplication from a JSON scan to an indexed `UNIQUE(event_id)` database column in `payment_events` with `SELECT ... FOR UPDATE` row locking.
+     - Eliminated account enumeration and real UUID/age leakage in registration: returns uniform HTTP 201 with synthetic pseudo-random UUIDs and fresh current timestamps.
+     - Hardened sliding-window rate limiters: only trusts `X-Forwarded-For` from configured `TRUSTED_PROXIES` (`127.0.0.1`, `::1`), bounds in-memory storage to 10,000 keys with LRU/FIFO eviction, and added protection to `/auth/refresh` (30/min) and `/invitations/accept` (10/min).
+     - Upgraded CSRF/Origin verification middleware: mutating requests without an `Origin` or `Referer` header are rejected with `403 Forbidden` in production, and localhost/testserver exemptions are strictly disabled in production.
+     - Removed `'unsafe-eval'` and `'unsafe-inline'` from production Next.js Content Security Policy (CSP), gating dev exemptions behind `isDev`. Calibrated HSTS to `max-age=31536000; includeSubDomains`.
+     - Parameterized `docker-compose.yml` to require environment variables without insecure production fallbacks, supported by `.env.example`.
+  3. **Payment Integrity & Liabilities Engine**:
+     - Wrapped `POST /bills/{id}/mark-paid` in `PaymentService.settle_self_reported_payment()` with `SELECT ... FOR UPDATE`, soft-delete verification, and auto-recurrence spawning.
+     - Rejected `PAID_UNVERIFIED` bills on `/pay` and `/mark-paid` with `409 ALREADY_PAID`.
+     - Added `POST /bills/{id}/payment/cancel` to release in-flight locks.
+     - Added dynamic loan amortizations: `POST /loans/{id}/payments`, `POST /loans/{id}/prepayments` (`REDUCE_TENURE` vs `REDUCE_EMI`), and `PATCH /loans/{id}`.
+     - Replaced all frontend `parseFloat` and `Math.random` with integer paise and `crypto.randomUUID()`.
+     - Created `test_extended_privacy_matrix.py` proving zero data leakage across personal radar, daily check-in notes, loan vaults, and immediate family access revocation.
+  4. **Quality Gates & Commit**:
+     - Pytest suite: 19 passed, 0 warnings (clean SQLite async engine + Alembic migration test from head down).
+     - TypeScript: exit code 0 (`tsc --noEmit`).
+     - ESLint: exit code 0 (`eslint`).
+     - Frontend smoke test: exit code 0 (`node scripts/smoke_test.mjs`).
+     - Production build: exit code 0 (`next build` with Turbopack).
+     - Created Git commit `acc99ba` on branch `consolidate-fastapi` under sole contributor identity `gowthame23 <gowthame23@users.noreply.github.com>`.
+
+---
+
+### **Session 8 — 2026-11-16 (Tracking Artifacts & Continuous Documentation Workflow)**
+- **User Directives Addressed**:
+  1. **Dynamic Overwrite Report (`report.md`)**:
+     - Created `report.md` in repository root.
+     - Configured workflow to completely overwrite `report.md` on every update, reflecting the latest test results, architecture state, security posture, and git commit details.
+  2. **Active Task Tracker (`tasks.md`)**:
+     - Created `tasks.md` in repository root.
+     - Outlined all completed phases (1 through 6) and defined upcoming roadmap tasks: remote push to `https://github.com/gowthame23/medu`, GitHub Actions CI pipeline execution with PostgreSQL, PR creation, and production staging.
+  3. **Append-Only Chronological Session Log (`session.md`)**:
+     - Strictly preserved all historical content in `session.md` without deletions.
+     - Appended comprehensive logs for Sessions 7 and 8 to maintain an unbroken audit trail for every user prompt.
