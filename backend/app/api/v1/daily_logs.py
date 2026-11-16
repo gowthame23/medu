@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.deps import get_current_user
+from app.core.errors import ValidationException
 from app.models.user import User
 from app.services.expense import ExpenseService
 from app.schemas.expense import (
@@ -47,10 +48,8 @@ async def get_daily_logs_range(
     db: AsyncSession = Depends(get_db)
 ):
     if start_date > end_date:
-        from app.core.errors import ValidationException
         raise ValidationException("start_date must be less than or equal to end_date", code="INVALID_DATE_RANGE")
     if (end_date - start_date).days > 366:
-        from app.core.errors import ValidationException
         raise ValidationException("Date range cannot exceed 366 days", code="DATE_RANGE_TOO_LARGE")
 
     service = ExpenseService(db)

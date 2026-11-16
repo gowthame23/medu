@@ -4,7 +4,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional, List, Tuple
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ResourceNotFoundException
+from app.core.errors import ResourceNotFoundException, ValidationException
 from app.models.liability import LiabilitiesVault
 from app.repositories.liability import LiabilityRepository
 from app.repositories.audit import AuditRepository
@@ -218,7 +218,6 @@ class LiabilityService:
 
         current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
         if principal_paid > current_rem:
-            from app.core.errors import ValidationException
             raise ValidationException(
                 f"Principal paid ({principal_paid}) cannot exceed remaining principal balance ({current_rem})",
                 code="PAYMENT_EXCEEDS_PRINCIPAL"
@@ -256,7 +255,6 @@ class LiabilityService:
 
         current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
         if lump_sum_amount > current_rem:
-            from app.core.errors import ValidationException
             raise ValidationException(
                 f"Prepayment amount ({lump_sum_amount}) cannot exceed remaining principal balance ({current_rem})",
                 code="PREPAYMENT_EXCEEDS_PRINCIPAL"
@@ -385,7 +383,6 @@ class LiabilityService:
             raise ResourceNotFoundException("Loan", "Loan not found in private vault")
 
         if prepayment_month > loan.tenure_months:
-            from app.core.errors import ValidationException
             raise ValidationException(
                 f"prepayment_month ({prepayment_month}) cannot exceed loan tenure ({loan.tenure_months} months)",
                 code="PREPAYMENT_MONTH_EXCEEDS_TENURE"
@@ -393,7 +390,6 @@ class LiabilityService:
 
         current_rem = await self.liability_repo.get_remaining_principal(user_id, loan_id)
         if prepayment_amount > current_rem:
-            from app.core.errors import ValidationException
             raise ValidationException(
                 f"prepayment_amount ({prepayment_amount}) cannot exceed remaining principal balance ({current_rem})",
                 code="PREPAYMENT_EXCEEDS_PRINCIPAL"
