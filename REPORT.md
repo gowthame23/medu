@@ -318,6 +318,7 @@ Route (app)
 
 ### 8.5 Full PostgreSQL Verification Script
 Command: `python scripts/verify_postgres.py`
+*(Note: Corrected line in Round 6 to paste raw unedited output byte-for-byte from out.txt, including full test prefix backend/tests/test_payments.py::test_postgres_concurrent_payment_race_condition.)*
 ```
 ============================= test session starts =============================
 platform win32 -- Python 3.14.2, pytest-9.1.1, pluggy-1.6.0 -- C:\Program Files\Python314\python.exe
@@ -350,7 +351,7 @@ backend/tests/test_liability_math.py::test_liability_api_endpoints PASSED [ 52%]
 backend/tests/test_migrations.py::test_alembic_upgrade_head_and_check_no_schema_drift PASSED [ 55%]
 backend/tests/test_payments.py::test_payment_idempotency_and_settlement PASSED [ 58%]
 backend/tests/test_payments.py::test_concurrent_payment_race_condition PASSED [ 61%]
-backend/tests/test_postgres_concurrent_payment_race_condition PASSED [ 64%]
+backend/tests/test_payments.py::test_postgres_concurrent_payment_race_condition PASSED [ 64%]
 backend/tests/test_payments.py::test_mark_paid_safety_and_rejection PASSED [ 67%]
 backend/tests/test_payments.py::test_payment_webhook_and_ledger PASSED   [ 70%]
 backend/tests/test_payments.py::test_payment_cancellation PASSED         [ 73%]
@@ -364,7 +365,18 @@ backend/tests/test_unbounded_inputs.py::test_daily_logs_range_bounds PASSED [ 94
 backend/tests/test_unbounded_inputs.py::test_list_endpoints_pagination_and_max_bounds PASSED [ 97%]
 backend/tests/test_unbounded_inputs.py::test_loan_bounds_rejections PASSED [100%]
 
-======================== 34 passed in 67.62s (0:01:07) ========================
+======================== 34 passed in 73.82s (0:01:13) ========================
+Connecting to Postgres at postgresql://postgres@127.0.0.1:5432/postgres...
+Created clean database: mend_empty_test
+
+--- Running Alembic upgrade head on empty DB (postgresql+asyncpg://postgres@127.0.0.1:5432/mend_empty_test) ---
+
+
+--- Running Alembic check on empty DB ---
+No new upgrade operations detected.
+
+
+--- Running full test suite against PostgreSQL ---
 ```
 
 ---
