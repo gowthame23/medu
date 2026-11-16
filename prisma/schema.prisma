@@ -1,0 +1,123 @@
+// Prisma Schema for Mend
+// "Mend" — The Anxiety-Free Household & Family Financial Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+enum RecurringType {
+  NONE
+  MONTHLY
+  YEARLY
+}
+
+model User {
+  id               String             @id @default(uuid())
+  email            String             @unique
+  name             String?
+  passwordHash     String
+  createdAt        DateTime           @default(now())
+
+  // Relationships
+  familyMemberships FamilyMember[]
+  dailyLogs        DailyLog[]
+  personalRadars   UpcomingRadar[]    @relation("PersonalRadars")
+  paidRadars       UpcomingRadar[]    @relation("PaidByRadars")
+  liabilities      LiabilitiesVault[] // STRICTLY individual/private only
+
+  @@map("users")
+}
+
+model FamilyGroup {
+  id               String             @id @default(uuid())
+  groupName        String             // e.g. "The Ejjurothu Family"
+  createdAt        DateTime           @default(now())
+
+  // Relationships
+  members          FamilyMember[]
+  sharedRadars     UpcomingRadar[]
+
+  @@map("family_groups")
+}
+
+model FamilyMember {
+  id               String             @id @default(uuid())
+  userId           String
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyGroupId    String
+  familyGroup      FamilyGroup        @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+  role             Role               @default(MEMBER)
+  createdAt        DateTime           @default(now())
+
+  @@unique([userId, familyGroupId])
+  @@map("family_members")
+}
+
+model DailyLog {
+  id                  String          @id @default(uuid())
+  userId              String
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logDate             DateTime        @default(now())
+  totalSpent          Float
+  categoriesBreakdown Json            // e.g. { "groceries": 450, "bills": 1200, "misc": 150 }
+  notes               String?
+  createdAt           DateTime        @default(now())
+
+  @@index([userId, logDate])
+  @@map("daily_logs")
+}
+
+model UpcomingRadar {
+  id                String            @id @default(uuid())
+  userId            String?           // Optional if family-wide bill
+  user              User?             @relation("PersonalRadars", fields: [userId], references: [id], onDelete: Cascade)
+  familyGroupId     String?           // Optional if individual bill
+  familyGroup       FamilyGroup?      @relation(fields: [familyGroupId], references: [id], onDelete: Cascade)
+
+  title             String            // e.g. "Electricity Bill (BESCOM)", "Airtel Fiber"
+  amount            Float
+  dueDate           DateTime
+  isPaid            Boolean           @default(false)
+  recurringType     RecurringType     @default(NONE)
+  category          String?           @default("Utilities")
+  consumerNumber    String?           // e.g. "BESCOM-CA #4928120"
+
+  // Automated Payment Attribution & Reconciliation
+  paidByUserId      String?
+  paidByUser        User?             @relation("PaidByRadars", fields: [paidByUserId], references: [id])
+  paymentTimestamp  DateTime?
+  paymentRef        String?           // e.g. UPI transaction reference "UPI-984210"
+  paymentMethod     String?           // e.g. "Google Pay (UPI)"
+
+  createdAt         DateTime          @default(now())
+
+  @@index([userId, dueDate])
+  @@index([familyGroupId, dueDate])
+  @@map("upcoming_radars")
+}
+
+model LiabilitiesVault {
+  // STRICTLY individual & private: Loans, mortgages, EMIs are never shared in family hub
+  id              String              @id @default(uuid())
+  userId          String
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loanName        String              // e.g. "Home Loan (SBI)", "Car Loan (HDFC)"
+  principalAmount Float
+  interestRate    Float               // Annual percentage e.g. 8.5
+  tenureMonths    Int
+  startDate       DateTime
+  monthlyEMI      Float
+  createdAt       DateTime            @default(now())
+
+  @@index([userId])
+  @@map("liabilities_vault")
+}

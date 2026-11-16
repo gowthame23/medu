@@ -1,0 +1,52 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: mend_db
+    environment:
+      POSTGRES_DB: mend
+      POSTGRES_USER: mend_user
+      POSTGRES_PASSWORD: mend_secure_dev_password_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mend_user -d mend"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: mend_api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DEBUG: "true"
+      DATABASE_URL: postgresql+psycopg://mend_user:mend_secure_dev_password_2026@db:5432/mend
+      DATABASE_URL_SYNC: postgresql://mend_user:mend_secure_dev_password_2026@db:5432/mend
+      SECRET_KEY: dev-insecure-secret-key-change-in-production-mend-2026-xyz
+      ENABLE_SANDBOX_PAYMENTS: "true"
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+    ports:
+      - "8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: mend_web
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: http://api:8000/api/v1
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:

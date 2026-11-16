@@ -1,69 +1,265 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState, useEffect } from 'react';
+import MobileHeader from '@/components/MobileHeader';
+import MobileNavBar from '@/components/MobileNavBar';
+import DashboardView from '@/components/DashboardView';
+import LiabilitiesVaultView from '@/components/LiabilitiesVaultView';
+import NightlyCheckInModal from '@/components/NightlyCheckInModal';
+import AddRadarModal from '@/components/AddRadarModal';
+import AddLoanModal from '@/components/AddLoanModal';
+import UPIIntentModal from '@/components/UPIIntentModal';
+import AutoDiscoverModal from '@/components/AutoDiscoverModal';
+import { UpcomingRadarRecord, DailyLogRecord, LiabilityRecord, CURRENT_USER, PARTNER_USER, DEFAULT_FAMILY_GROUP } from '@/lib/dataStore';
 
 export default function Home() {
+  // Dual-Account Mode: 'individual' (Private Space) vs 'family' (Shared Household Hub)
+  const [currentMode, setCurrentMode] = useState<'individual' | 'family'>('individual');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'vault'>('dashboard');
+  const [activeUser, setActiveUser] = useState<'gowtham' | 'priya'>('gowtham');
+
+  // Dashboard Data State
+  const [streak, setStreak] = useState<number>(14);
+  const [isTodayLogged, setIsTodayLogged] = useState<boolean>(false);
+  const [todayCheckIn, setTodayCheckIn] = useState<DailyLogRecord | null>(null);
+  const [tomorrowRadars, setTomorrowRadars] = useState<UpcomingRadarRecord[]>([]);
+  const [allRadars, setAllRadars] = useState<UpcomingRadarRecord[]>([]);
+  const [recentLogs, setRecentLogs] = useState<DailyLogRecord[]>([]);
+  const [loans, setLoans] = useState<LiabilityRecord[]>([]);
+  const [vaultSummary, setVaultSummary] = useState<{
+    activeLoansCount: number;
+    totalDailyDebtCost: number;
+  }>({ activeLoansCount: 0, totalDailyDebtCost: 0 });
+
+  // Modals & 1-Tap UPI Intent State
+  const [isCheckInOpen, setIsCheckInOpen] = useState<boolean>(false);
+  const [isAddRadarOpen, setIsAddRadarOpen] = useState<boolean>(false);
+  const [isAddLoanOpen, setIsAddLoanOpen] = useState<boolean>(false);
+  const [isAutoDiscoverOpen, setIsAutoDiscoverOpen] = useState<boolean>(false);
+  const [selectedUPIBill, setSelectedUPIBill] = useState<UpcomingRadarRecord | null>(null);
+  const [isUPIModalOpen, setIsUPIModalOpen] = useState<boolean>(false);
+  const [isAutoSyncing, setIsAutoSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
+  const activeUserProfile = activeUser === 'gowtham' ? CURRENT_USER : PARTNER_USER;
+
+  // Load Dashboard Data respecting strict dual-account privacy boundary
+  const refreshDashboard = async () => {
+    try {
+      const [dashRes, radarRes, loanRes] = await Promise.all([
+        fetch(`/api/dashboard?mode=${currentMode}&userId=${activeUserProfile.id}`),
+        fetch(`/api/radar?mode=${currentMode}&userId=${activeUserProfile.id}`),
+        // Only query loans in individual mode to ensure zero debt leakage!
+        currentMode === 'individual'
+          ? fetch(`/api/liabilities?userId=${activeUserProfile.id}`)
+          : Promise.resolve({ ok: false, json: () => Promise.resolve([]) } as any),
+      ]);
+
+      if (dashRes.ok) {
+        const dashData = await dashRes.json();
+        setStreak(dashData.streak || 14);
+        setIsTodayLogged(dashData.isTodayLogged || false);
+        setTodayCheckIn(dashData.todayCheckIn || null);
+        setTomorrowRadars(dashData.tomorrowRadars || []);
+        setAllRadars(dashData.allRadars || []);
+        setRecentLogs(dashData.recentLogs || []);
+        if (dashData.vaultOverview) {
+          setVaultSummary(dashData.vaultOverview);
+        }
+      }
+
+      if (radarRes.ok) {
+        const radarData = await radarRes.json();
+        setAllRadars(radarData.all || []);
+      }
+
+      if (loanRes && loanRes.ok) {
+        const loanData = await loanRes.json();
+        setLoans(loanData.loans || []);
+      } else {
+        // Enforce empty loans in family mode
+        setLoans([]);
+      }
+    } catch (err) {
+      console.error('Failed to load dashboard data:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshDashboard();
+
+    // Auto-sync every 8 seconds + on window focus
+    const interval = setInterval(refreshDashboard, 8000);
+    window.addEventListener('focus', refreshDashboard);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', refreshDashboard);
+    };
+  }, [currentMode, activeUser]);
+
+  // Mode Switching
+  const handleSwitchMode = (mode: 'individual' | 'family') => {
+    setCurrentMode(mode);
+    // If switching to family mode, return to dashboard tab since vault is strictly individual
+    if (mode === 'family') {
+      setActiveTab('dashboard');
+    }
+  };
+
+  // Attempting to access vault in family mode
+  const handleAttemptVaultInFamilyMode = () => {
+    alert(
+      '🛡️ Strict Privacy Policy: Personal loans, mortgages, and debts are private individual spaces. Family views cannot access personal liabilities. Switching to My Private Space.'
+    );
+    setCurrentMode('individual');
+    setActiveTab('vault');
+  };
+
+  // 1-Tap UPI Intent Trigger
+  const handleOpenUPIIntent = (bill: UpcomingRadarRecord) => {
+    setSelectedUPIBill(bill);
+    setIsUPIModalOpen(true);
+  };
+
+  // Quick Toggle Paid
+  const handleToggleRadarPaid = async (id: string) => {
+    try {
+      await fetch(`/api/radar/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paidBy: activeUserProfile.name }),
+      });
+      refreshDashboard();
+    } catch (err) {
+      console.error('Failed to toggle bill:', err);
+      refreshDashboard();
+    }
+  };
+
+  // Auto-Sync External Bills
+  const handleAutoSyncBills = async () => {
+    setIsAutoSyncing(true);
+    setSyncMessage(null);
+    try {
+      const res = await fetch('/api/radar/auto-sync', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSyncMessage(data.message);
+        refreshDashboard();
+        setTimeout(() => setSyncMessage(null), 5000);
+      }
+    } catch (err) {
+      console.error('Auto-sync error:', err);
+    } finally {
+      setIsAutoSyncing(false);
+    }
+  };
+
+  const unpaidTomorrowCount = tomorrowRadars.filter(r => !r.isPaid).length;
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
+    <div className="min-h-screen flex flex-col justify-between">
+      {/* Top Mobile Bar with Mode & User Switcher */}
+      <MobileHeader
+        currentMode={currentMode}
+        onSwitchMode={handleSwitchMode}
+        streak={streak}
+        userName={activeUserProfile.name.split(' ')[0]}
+        familyGroupName={DEFAULT_FAMILY_GROUP.groupName}
+        onOpenAutoDiscover={() => setIsAutoDiscoverOpen(true)}
+        activeUser={activeUser}
+        onSwitchUser={setActiveUser}
+      />
+
+      {/* Main Screen View */}
+      <main className="flex-1">
+        {activeTab === 'dashboard' ? (
+          <DashboardView
+            currentMode={currentMode}
+            streak={streak}
+            isTodayLogged={isTodayLogged}
+            todayCheckIn={todayCheckIn}
+            tomorrowRadars={tomorrowRadars}
+            allRadars={allRadars}
+            recentLogs={recentLogs}
+            onOpenCheckIn={() => setIsCheckInOpen(true)}
+            onOpenAddRadar={() => setIsAddRadarOpen(true)}
+            onOpenUPIIntentModal={handleOpenUPIIntent}
+            onToggleRadarPaid={handleToggleRadarPaid}
+            onAutoSyncBills={handleAutoSyncBills}
+            onOpenAutoDiscover={() => setIsAutoDiscoverOpen(true)}
+            isAutoSyncing={isAutoSyncing}
+            syncMessage={syncMessage}
+            onNavigateToVault={() => setActiveTab('vault')}
+            activeUserName={activeUserProfile.name.split(' ')[0]}
+            vaultSummary={vaultSummary}
+          />
+        ) : (
+          <LiabilitiesVaultView
+            loans={loans}
+            onOpenAddLoan={() => setIsAddLoanOpen(true)}
+            onRefreshLoans={refreshDashboard}
+            userName={activeUserProfile.name.split(' ')[0]}
+          />
+        )}
       </main>
+
+      {/* Bottom Navigation Bar */}
+      <MobileNavBar
+        currentMode={currentMode}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        onOpenCheckIn={() => setIsCheckInOpen(true)}
+        unpaidTomorrowCount={unpaidTomorrowCount}
+        isTodayLogged={isTodayLogged}
+        onAttemptVaultInFamilyMode={handleAttemptVaultInFamilyMode}
+      />
+
+      {/* 1-Tap UPI Intent Modal (Direct Deep Link to Google Pay / PhonePe with auto-reconcile) */}
+      <UPIIntentModal
+        bill={selectedUPIBill}
+        isOpen={isUPIModalOpen}
+        onClose={() => {
+          setIsUPIModalOpen(false);
+          setSelectedUPIBill(null);
+        }}
+        onPaymentReconciled={refreshDashboard}
+        currentUserName={activeUserProfile.name}
+        currentUserId={activeUserProfile.id}
+      />
+
+      {/* 30-Second Nightly Check-In Bottom Sheet */}
+      <NightlyCheckInModal
+        isOpen={isCheckInOpen}
+        onClose={() => setIsCheckInOpen(false)}
+        onSuccess={refreshDashboard}
+        userId={activeUserProfile.id}
+        userName={activeUserProfile.name.split(' ')[0]}
+      />
+
+      {/* Add Radar Bill Modal */}
+      <AddRadarModal
+        isOpen={isAddRadarOpen}
+        onClose={() => setIsAddRadarOpen(false)}
+        onSuccess={refreshDashboard}
+        userId={activeUserProfile.id}
+      />
+
+      {/* Add Personal Loan Modal */}
+      <AddLoanModal
+        isOpen={isAddLoanOpen}
+        onClose={() => setIsAddLoanOpen(false)}
+        onSuccess={refreshDashboard}
+        userId={activeUserProfile.id}
+      />
+
+      {/* Auto-Discover Household (Phone & Email Integration) */}
+      <AutoDiscoverModal
+        isOpen={isAutoDiscoverOpen}
+        onClose={() => setIsAutoDiscoverOpen(false)}
+        onSuccess={refreshDashboard}
+      />
     </div>
   );
 }
