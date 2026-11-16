@@ -26,12 +26,12 @@ services:
         condition: service_healthy
     environment:
       APP_ENV: ${APP_ENV:-development}
-      DEBUG: ${DEBUG:-"false"}
+      DEBUG: ${DEBUG:-false}
       DATABASE_URL: postgresql+asyncpg://mend_user:${POSTGRES_PASSWORD:-mend_secure_dev_password_2026}@db:5432/mend
       DATABASE_URL_SYNC: postgresql://mend_user:${POSTGRES_PASSWORD:-mend_secure_dev_password_2026}@db:5432/mend
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY must be provided}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET must be provided}
-      ENABLE_SANDBOX_PAYMENTS: ${ENABLE_SANDBOX_PAYMENTS:-"true"}
+      ENABLE_SANDBOX_PAYMENTS: ${ENABLE_SANDBOX_PAYMENTS:-true}
       CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
     ports:
       - "8000:8000"

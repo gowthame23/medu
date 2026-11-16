@@ -161,7 +161,14 @@ async def test_origin_csrf_check(client: AsyncClient):
             json={"email": "attacker@example.com", "password": "Password123!"}
         )
         assert res_no_origin.status_code == 403
-        assert "Missing Origin header" in res_no_origin.json()["error"]["message"]
+        # 3. Only the exact `/api/v1/payments/webhook` route is exempt from Origin check;
+        # arbitrary endpoints ending with `/webhook` are strictly NOT exempt in production
+        fake_webhook_res = await client.post(
+            "/api/v1/fake/webhook",
+            json={"fake": True}
+        )
+        assert fake_webhook_res.status_code == 403
+        assert "Missing Origin header" in fake_webhook_res.json()["error"]["message"]
     finally:
         settings.APP_ENV = orig_env
 

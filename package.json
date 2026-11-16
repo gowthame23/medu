@@ -8,8 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "smoke": "node scripts/smoke_test.mjs",
-    "test": "tsc --noEmit && eslint && node scripts/smoke_test.mjs"
+    "test:static": "node scripts/static_checks.mjs",
+    "test:e2e": "node scripts/test_e2e.mjs",
+    "test": "tsc --noEmit && eslint && node scripts/static_checks.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",
@@ -20,6 +21,7 @@
     "tailwind-merge": "^3.7.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@tailwindcss/turbopack": "4.3.3",
     "@types/node": "^20",
     "@types/react": "^19",

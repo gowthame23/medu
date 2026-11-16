@@ -68,20 +68,39 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## 🧪 Verification & Test Suite
 
-All changes are strictly verified across backend and frontend:
+All changes are strictly verified across backend, frontend, static AST checks, and Playwright end-to-end browser journeys:
 ```bash
-# Backend pytest suite (Auth, Privacy Matrix, Payments, Loans, Migrations, Financial Precision)
+# 1. Backend Pytest Suite (Auth, Privacy Matrix, Payments, Webhook Ledger, Loans, Migrations)
 python -m pytest -q
 
-# Frontend typecheck
+# 2. Frontend TypeScript Typecheck
 npx tsc --noEmit
 
-# Frontend linter
+# 3. Frontend ESLint
 npm run lint
 
-# Production compilation
+# 4. Next.js Production Build
 npm run build
+
+# 5. Frontend Static Integrity Checks (Asserts zero parseFloat, strict CSP, required models)
+npm run test:static
+
+# 6. Real Playwright End-to-End User Journey (Register -> Login -> Dashboard -> Add Bill -> Pay via UPI -> Paid Attribution -> Logout)
+npm run test:e2e
+
+# 7. Docker Compose Config & Verification (Requires Docker engine installed)
+docker compose config
+docker compose up --build
 ```
+
+---
+
+## ⚠️ Known Limits & Implementation Scope (v1)
+
+- **Rate Limiting**: Sliding-window rate limiter is currently in-process and per-worker memory. Multi-worker deployments require Redis.
+- **Payment Gateway**: Payments are currently driven by a simulated sandbox provider (`ENABLE_SANDBOX_PAYMENTS=True`). No live NPCI UPI or BBPS endpoints are connected.
+- **Self-Reported Payments**: Marked as `PAID_UNVERIFIED` until external biller confirmation.
+- **Account Recovery**: No email verification tokens or SMTP delivery; no password reset flow. Authentication uses direct Argon2id credentials.
 
 ---
 

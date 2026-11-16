@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { AuthProvider } from '@/context/AuthContext';
 
+export const dynamic = 'force-dynamic';
+
 export const metadata: Metadata = {
   title: 'Mend — The Anxiety-Free Household & Family Financial Platform',
   description: 'Anxiety-free household platform with strict dual-account privacy, 30s ritual, tomorrow radar, and 1-tap UPI intent.',

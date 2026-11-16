@@ -64,8 +64,8 @@ app = FastAPI(
 @app.middleware("http")
 async def verify_origin_middleware(request: Request, call_next):
     if request.method in ("POST", "PUT", "PATCH", "DELETE"):
-        # Exclude webhook endpoints which originate from payment provider servers
-        if not request.url.path.endswith("/webhook"):
+        # Exclude only the exact payment webhook endpoint which originates from payment provider servers
+        if request.url.path != f"{settings.API_V1_PREFIX}/payments/webhook":
             origin = request.headers.get("origin")
             referer = request.headers.get("referer")
             check_header = origin or referer

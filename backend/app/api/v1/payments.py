@@ -104,47 +104,75 @@ async def payment_webhook(
     now = datetime.now(timezone.utc)
     payment_service = PaymentService(db)
 
-    # 4. Transition transaction based on webhook event
-    from sqlalchemy.exc import IntegrityError
+    # 4. Strict State Machine Validation:
+    # A webhook may only move a transaction from PENDING to SUCCESS or FAILED.
+    # Webhooks for already FAILED (cancelled) or SUCCESS transactions, or when the bill
+    # is already PAID or PAID_UNVERIFIED, must never mark the bill paid.
+    from sqlalchemy.exc import IntegrityError, OperationalError
     try:
+        bill_res = await db.execute(
+            select(UpcomingRadar).where(UpcomingRadar.id == txn.bill_id).with_for_update()
+        )
+        bill = bill_res.scalar_one_or_none()
+
+        # Check if transaction or bill is in terminal state
+        is_terminal_txn = txn.status != "PENDING"
+        is_bill_already_settled = bill is not None and bill.bill_status in ("PAID", "PAID_UNVERIFIED")
+
+        if is_terminal_txn or is_bill_already_settled:
+            # Record in ledger for audit trail without altering transaction or bill state
+            event_record = PaymentEvent(
+                transaction_id=txn.id,
+                event_id=event_id,
+                from_status=txn.status,
+                to_status=txn.status,
+                detail={
+                    "action": "IGNORED_TERMINAL_OR_ALREADY_SETTLED",
+                    "reason": f"txn_status={txn.status}, bill_status={bill.bill_status if bill else 'none'}",
+                    "payload": payload
+                }
+            )
+            db.add(event_record)
+            await db.commit()
+            return {
+                "received": True,
+                "event_id": event_id,
+                "status": "ignored_terminal_state",
+                "transaction_status": txn.status,
+                "bill_status": bill.bill_status if bill else None
+            }
+
         if event_type == "payment.success":
             old_status = txn.status
-            if txn.status != "SUCCESS":
-                txn.status = "SUCCESS"
-                txn.payment_reference = payment_reference or txn.payment_reference
-                txn.verified_timestamp = now
-                db.add(txn)
+            txn.status = "SUCCESS"
+            txn.payment_reference = payment_reference or txn.payment_reference
+            txn.verified_timestamp = now
+            db.add(txn)
 
-                # Update bill status
-                bill_res = await db.execute(
-                    select(UpcomingRadar).where(UpcomingRadar.id == txn.bill_id)
+            if bill:
+                bill.bill_status = "PAID"
+                bill.paid_at = now
+                db.add(bill)
+                payment_service._spawn_next_recurring_bill_if_needed(bill)
+
+                # Emit OutboxEvent
+                outbox_event = OutboxEvent(
+                    event_type="PAYMENT_SUCCEEDED",
+                    aggregate_type="UpcomingRadar",
+                    aggregate_id=str(bill.id),
+                    payload={
+                        "bill_id": str(bill.id),
+                        "bill_title": bill.title,
+                        "amount": f"{bill.amount:.2f}",
+                        "payer_id": str(txn.paid_by_user_id) if txn.paid_by_user_id else None,
+                        "payer_name": txn.paid_by_display_name_snapshot or "Member",
+                        "payment_reference": txn.payment_reference,
+                        "family_group_id": str(bill.family_group_id) if bill.family_group_id else None
+                    },
+                    dedupe_key=f"webhook:{event_id}"
                 )
-                bill = bill_res.scalar_one_or_none()
-                if bill:
-                    bill.bill_status = "PAID"
-                    bill.paid_at = now
-                    db.add(bill)
-                    payment_service._spawn_next_recurring_bill_if_needed(bill)
+                db.add(outbox_event)
 
-                    # Emit OutboxEvent
-                    outbox_event = OutboxEvent(
-                        event_type="PAYMENT_SUCCEEDED",
-                        aggregate_type="UpcomingRadar",
-                        aggregate_id=str(bill.id),
-                        payload={
-                            "bill_id": str(bill.id),
-                            "bill_title": bill.title,
-                            "amount": f"{bill.amount:.2f}",
-                            "payer_id": str(txn.paid_by_user_id) if txn.paid_by_user_id else None,
-                            "payer_name": txn.paid_by_display_name_snapshot or "Member",
-                            "payment_reference": txn.payment_reference,
-                            "family_group_id": str(bill.family_group_id) if bill.family_group_id else None
-                        },
-                        dedupe_key=f"webhook:{event_id}"
-                    )
-                    db.add(outbox_event)
-
-            # Record event in processed-events ledger with unique event_id
             event_record = PaymentEvent(
                 transaction_id=txn.id,
                 event_id=event_id,
@@ -155,7 +183,7 @@ async def payment_webhook(
             db.add(event_record)
             await db.commit()
 
-        elif event_type == "payment.failed" and txn.status != "SUCCESS":
+        elif event_type == "payment.failed":
             old_status = txn.status
             txn.status = "FAILED"
             txn.failure_reason = payload.get("failure_reason", "Payment failed at bank")
@@ -170,7 +198,8 @@ async def payment_webhook(
             )
             db.add(event_record)
             await db.commit()
-    except IntegrityError:
+
+    except (IntegrityError, OperationalError):
         await db.rollback()
         return {"received": True, "status": "already_processed", "event_id": event_id}
 

@@ -1,5 +1,9 @@
+import os
 import pytest
 from httpx import AsyncClient
+
+# Determine whether tests are running against SQLite or Postgres
+is_sqlite = "sqlite" in (os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or "sqlite")
 
 
 @pytest.mark.asyncio
@@ -50,6 +54,13 @@ async def test_payment_idempotency_and_settlement(client: AsyncClient, create_us
 
 @pytest.mark.asyncio
 async def test_concurrent_payment_race_condition(client: AsyncClient, create_user_fixture):
+    """
+    NOTE ON SQLITE VS POSTGRES:
+    SQLite ignores 'FOR UPDATE' clauses and serializes operations via database-level locking.
+    This test confirms that concurrent coroutines executed via asyncio.gather against the ASGI
+    client result in one 200 (first settled) and one 409 (conflict). True multi-connection
+    row lock contention proof is exercised on PostgreSQL via CI.
+    """
     import asyncio
     user, token = await create_user_fixture("race@test.com", "Race User")
     headers = {"Authorization": f"Bearer {token}"}
@@ -70,6 +81,39 @@ async def test_concurrent_payment_race_condition(client: AsyncClient, create_use
     req2 = client.post(
         f"/api/v1/bills/{bill_id}/pay",
         headers={**headers, "Idempotency-Key": "concurrent_key_beta"}
+    )
+
+    res1, res2 = await asyncio.gather(req1, req2)
+    status_codes = sorted([res1.status_code, res2.status_code])
+    assert status_codes == [200, 409], f"Expected [200, 409], got {status_codes}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(is_sqlite, reason="Postgres-only: Verifies real PostgreSQL row locking (SELECT ... FOR UPDATE) across concurrent transactions. Skipped on SQLite.")
+async def test_postgres_concurrent_payment_race_condition(client: AsyncClient, create_user_fixture):
+    """
+    Races two concurrent requests against PostgreSQL to verify row-level FOR UPDATE locking.
+    """
+    import asyncio
+    user, token = await create_user_fixture("pg_race@test.com", "Postgres Race User")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Create bill
+    bill_res = await client.post(
+        "/api/v1/bills",
+        json={"title": "Postgres Concurrency Gas Bill", "amount": "850.00", "due_date": "2026-12-01"},
+        headers=headers
+    )
+    bill_id = bill_res.json()["id"]
+
+    # Two simultaneous requests with different idempotency keys
+    req1 = client.post(
+        f"/api/v1/bills/{bill_id}/pay",
+        headers={**headers, "Idempotency-Key": "pg_concurrent_key_alpha"}
+    )
+    req2 = client.post(
+        f"/api/v1/bills/{bill_id}/pay",
+        headers={**headers, "Idempotency-Key": "pg_concurrent_key_beta"}
     )
 
     res1, res2 = await asyncio.gather(req1, req2)
@@ -137,13 +181,23 @@ async def test_payment_webhook_and_ledger(client: AsyncClient, create_user_fixtu
     )
     bill_id = bill_res.json()["id"]
 
-    # 2. Mock an existing pending transaction by creating one
-    pay_res = await client.post(
-        f"/api/v1/bills/{bill_id}/pay",
-        headers={**headers, "Idempotency-Key": "wh_intent_key"}
-    )
-    assert pay_res.status_code == 200
-    txn_id = pay_res.json()["transaction_id"]
+    # 2. Create an in-flight PENDING transaction in database
+    from app.repositories.payment import PaymentRepository
+    from backend.tests.conftest import TestAsyncSessionLocal
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal
+
+    async with TestAsyncSessionLocal() as session:
+        repo = PaymentRepository(session)
+        txn = await repo.create_pending_transaction(
+            bill_id=uuid.UUID(bill_id),
+            idempotency_key="wh_pending_intent_key",
+            amount=Decimal("999.00"),
+            paid_by_user_id=user.id,
+            paid_by_display_name="Webhook User",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+        txn_id = str(txn.id)
 
     # 3. Build Webhook Payload
     webhook_payload = {
@@ -252,3 +306,137 @@ async def test_payment_cancellation(client: AsyncClient, create_user_fixture):
     )
     assert pay_res.status_code == 200
     assert pay_res.json()["status"] == "SUCCESS"
+
+
+@pytest.mark.asyncio
+async def test_webhook_on_cancelled_payment_must_not_mark_bill_paid(client: AsyncClient, create_user_fixture):
+    import uuid
+    import time
+    import json
+    import hmac
+    import hashlib
+    from app.core.config import settings
+    from app.repositories.payment import PaymentRepository
+    from backend.tests.conftest import TestAsyncSessionLocal
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal
+
+    user, token = await create_user_fixture("wh_cancel@test.com", "WH Cancel User")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Create a bill
+    bill_res = await client.post(
+        "/api/v1/bills",
+        json={"title": "Cancelled Webhook Test", "amount": "450.00", "due_date": "2026-11-30"},
+        headers=headers
+    )
+    bill_id = bill_res.json()["id"]
+
+    # 2. Create pending transaction and cancel it
+    async with TestAsyncSessionLocal() as session:
+        repo = PaymentRepository(session)
+        txn = await repo.create_pending_transaction(
+            bill_id=uuid.UUID(bill_id),
+            idempotency_key="pending_for_cancel_test",
+            amount=Decimal("450.00"),
+            paid_by_user_id=user.id,
+            paid_by_display_name="WH Cancel User",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+        txn_id = str(txn.id)
+
+    cancel_res = await client.post(f"/api/v1/bills/{bill_id}/payment/cancel", headers=headers)
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["status"] == "FAILED"
+
+    # 3. Deliver payment.success webhook for the cancelled transaction
+    wh_payload = {
+        "event_id": f"evt_cancel_{uuid.uuid4().hex}",
+        "event_type": "payment.success",
+        "transaction_id": txn_id,
+        "amount": "450.00",
+        "payment_reference": "WH_LATE_SUCCESS"
+    }
+    payload_bytes = json.dumps(wh_payload).encode("utf-8")
+    ts = str(int(time.time()))
+    sig = hmac.new(settings.WEBHOOK_SECRET.encode("utf-8"), f"{ts}.".encode("utf-8") + payload_bytes, hashlib.sha256).hexdigest()
+
+    wh_res = await client.post(
+        "/api/v1/payments/webhook",
+        content=payload_bytes,
+        headers={"X-Signature": sig, "X-Timestamp": ts, "Content-Type": "application/json"}
+    )
+    assert wh_res.status_code == 200
+    assert wh_res.json()["status"] == "ignored_terminal_state"
+
+    # 4. Bill MUST STILL NOT be marked paid!
+    bill_check = await client.get(f"/api/v1/bills/{bill_id}", headers=headers)
+    assert bill_check.status_code == 200
+    assert bill_check.json()["bill_status"] != "PAID"
+    assert bill_check.json()["paid_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_simultaneous_webhook_deliveries_handled_gracefully(client: AsyncClient, create_user_fixture):
+    import uuid
+    import time
+    import json
+    import hmac
+    import hashlib
+    import asyncio
+    from app.core.config import settings
+
+    user, token = await create_user_fixture("wh_race@test.com", "WH Race User")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # 1. Create a bill & pending transaction
+    bill_res = await client.post(
+        "/api/v1/bills",
+        json={"title": "Race Webhook Test", "amount": "1500.00", "due_date": "2026-11-30"},
+        headers=headers
+    )
+    bill_id = bill_res.json()["id"]
+
+    from app.repositories.payment import PaymentRepository
+    from backend.tests.conftest import TestAsyncSessionLocal
+    from datetime import datetime, timezone, timedelta
+    from decimal import Decimal
+
+    async with TestAsyncSessionLocal() as session:
+        repo = PaymentRepository(session)
+        txn = await repo.create_pending_transaction(
+            bill_id=uuid.UUID(bill_id),
+            idempotency_key="wh_race_key",
+            amount=Decimal("1500.00"),
+            paid_by_user_id=user.id,
+            paid_by_display_name="WH Race User",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15)
+        )
+        txn_id = str(txn.id)
+
+    # 2. Build webhook with shared event_id
+    shared_event_id = f"evt_race_{uuid.uuid4().hex}"
+    wh_payload = {
+        "event_id": shared_event_id,
+        "event_type": "payment.success",
+        "transaction_id": txn_id,
+        "amount": "1500.00",
+        "payment_reference": "WH_RACE_SUCCESS"
+    }
+    payload_bytes = json.dumps(wh_payload).encode("utf-8")
+    ts = str(int(time.time()))
+    sig = hmac.new(settings.WEBHOOK_SECRET.encode("utf-8"), f"{ts}.".encode("utf-8") + payload_bytes, hashlib.sha256).hexdigest()
+    wh_headers = {"X-Signature": sig, "X-Timestamp": ts, "Content-Type": "application/json"}
+
+    # 3. Fire simultaneous webhook deliveries with identical event_id
+    res1, res2 = await asyncio.gather(
+        client.post("/api/v1/payments/webhook", content=payload_bytes, headers=wh_headers),
+        client.post("/api/v1/payments/webhook", content=payload_bytes, headers=wh_headers),
+    )
+
+    statuses = [res1.json().get("status"), res2.json().get("status")]
+    assert res1.status_code == 200
+    assert res2.status_code == 200
+    # Exactly one processes the event, and the other receives already_processed deduplication
+    assert "processed" in statuses
+    assert "already_processed" in statuses

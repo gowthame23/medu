@@ -6,7 +6,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const rootDir = path.resolve(__dirname, "..");
 
-console.log("=== RUNNING FRONTEND SMOKE TEST ===");
+console.log("=== RUNNING FRONTEND STATIC INTEGRITY CHECKS ===");
 
 let failures = 0;
 
@@ -37,15 +37,15 @@ function checkNoParseFloat(dir) {
 checkNoParseFloat(path.join(rootDir, "src"));
 assert(true, "Zero parseFloat found across entire src/ directory");
 
-// 2. Verify CSP Configuration in next.config.ts
-const nextConfig = fs.readFileSync(path.join(rootDir, "next.config.ts"), "utf-8");
+// 2. Verify CSP Configuration in src/proxy.ts
+const proxyTs = fs.readFileSync(path.join(rootDir, "src/proxy.ts"), "utf-8");
 assert(
-  nextConfig.includes("default-src 'self'") && nextConfig.includes("connect-src 'self'"),
-  "next.config.ts defines strict CSP header"
+  proxyTs.includes("default-src 'self'") && proxyTs.includes("connect-src 'self'") && proxyTs.includes("'nonce-"),
+  "src/proxy.ts defines strict nonce-based CSP header"
 );
 assert(
-  nextConfig.includes("isDev ?") && !nextConfig.match(/script-src 'self' 'unsafe-eval'/),
-  "next.config.ts gates 'unsafe-eval' behind isDev flag (clean in production)"
+  proxyTs.includes("isDev ?") && !proxyTs.match(/script-src 'self' 'unsafe-eval'/),
+  "src/proxy.ts gates 'unsafe-eval' behind isDev flag (clean in production)"
 );
 
 // 3. Verify Routes and Core Components Exist
@@ -78,9 +78,9 @@ assert(fs.existsSync(nextBuildDir), ".next build artifact directory exists");
 
 console.log("===================================");
 if (failures > 0) {
-  console.error(`Smoke test completed with ${failures} failure(s).`);
+  console.log("Static checks completed with " + failures + " failure(s).");
   process.exit(1);
 } else {
-  console.log("All frontend smoke tests passed successfully!");
+  console.log("All frontend static integrity checks passed successfully!");
   process.exit(0);
 }

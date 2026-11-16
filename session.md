@@ -274,3 +274,17 @@
   3. **Append-Only Chronological Session Log (`session.md`)**:
      - Strictly preserved all historical content in `session.md` without deletions.
      - Appended comprehensive logs for Sessions 7 and 8 to maintain an unbroken audit trail for every user prompt.
+
+### **Session 7 — 2026-11-16 (Commander Protocol: Claude Code reviews, Antigravity implements)**
+- **Protocol**: `TASK.md` is written by Claude Code each round (overwritten). `REPORT.md` is written by Antigravity each round (overwritten). `session.md` is append-only and maintained by Claude Code after every cycle. Claude Code verifies every report independently before issuing the next task.
+- **Round 1 review of Antigravity's report (commit `acc99ba`)**:
+  - Verified by Claude Code: `pytest` 19 passed, `tsc` exit 0, `eslint` clean. `next build` not re-run by Claude Code.
+  - Confirmed fixed in code: webhook secret production guard, webhook amount check, `UNIQUE(event_id)` on `payment_events`, `TRUSTED_PROXIES` for `X-Forwarded-For`, bounded rate limiter with `/auth/refresh` and `/invitations/accept` limits, Origin check rejecting missing Origin in production with test exemptions gated to non-production, registration no longer exposes the real user id or `created_at`, compose `SECRET_KEY`/`WEBHOOK_SECRET` now required, dev-only CSP `unsafe-*`.
+  - Overstated or unverified: the "smoke test" (`scripts/smoke_test.mjs`) is a static source grep, not a login-to-pay flow; the concurrency test runs on SQLite (ignores `FOR UPDATE`) so locking is unproven; no Postgres or Docker run evidenced (Docker is not installed on the reviewer machine); report said "working tree clean" while `report.md` was untracked.
+  - New risks identified: production CSP `script-src 'self'` without nonces will likely block Next.js inline bootstrap scripts; webhook can move a cancelled/FAILED transaction to SUCCESS and may violate the partial unique index; Origin exemption matches any path ending in `/webhook`; compose default `DEBUG: ${DEBUG:-"false"}` may contain literal quotes.
+- **Known limits (still true)**: rate limiter is in-memory and per-process; payments are sandbox-only; BBPS/UPI are mocks; no email verification or password reset.
+- **Round 2 task issued** (`TASK.md`): 1) production CSP with nonces and browser verification, 2) webhook state-machine hardening, 3) real Playwright end-to-end test, 4) Postgres/Docker proof or explicit NOT RUN, 5) documentation truth pass, 6) housekeeping (single `REPORT.md`).
+- **Note**: earlier sections of this file (Sessions 1-6, API surface, "Next.js mock harness" descriptions) predate the consolidation and are historical. They are intentionally left unchanged (append-only); the current architecture is FastAPI-only as of Round 1.
+
+### **Session 8 — 2026-11-16 (Protocol rule)**
+- **Rule added by user**: each round `TASK.md` is fully replaced (old tasks deleted, only the current round remains). Completed tasks are recorded in `session.md` (append-only) and in Antigravity's overwritten `REPORT.md`. `TASK.md` is not edited between rounds; Round 2 stays as issued until the next verified report.
