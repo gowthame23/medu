@@ -8,6 +8,7 @@ from app.models.liability import LiabilitiesVault, LoanPayment, LoanPrepayment
 from app.models.notification import Notification
 from app.models.audit import AuditLog
 from app.models.outbox import OutboxEvent
+from app.models.verification import VerificationChallenge
 
 __all__ = [
     "Base",
@@ -33,4 +34,5 @@ __all__ = [
     "Notification",
     "AuditLog",
     "OutboxEvent",
+    "VerificationChallenge",
 ]

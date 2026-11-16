@@ -42,6 +42,28 @@ class Settings(BaseSettings):
     ENABLE_SANDBOX_PAYMENTS: bool = True
     WEBHOOK_SECRET: str = "dev-insecure-webhook-secret-2026"
 
+    # Verification & Notification Providers
+    EMAIL_PROVIDER: str = "console"  # console, smtp
+    SMS_PROVIDER: str = "console"    # console
+
+    # SMTP Configuration
+    SMTP_HOST: str = "localhost"
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@mend.local"
+    SMTP_USE_TLS: bool = True
+
+    # Verification Policies & Bounds
+    VERIFICATION_CODE_TTL_MINUTES: int = 10
+    VERIFICATION_MAX_ATTEMPTS: int = 5
+    VERIFICATION_RESEND_COOLDOWN_SECONDS: int = 60
+    VERIFICATION_HOURLY_CAP: int = 5
+
+    # Payment Gating Policies
+    REQUIRE_EMAIL_VERIFICATION_FOR_PAYMENTS: bool = True
+    REQUIRE_PHONE_VERIFICATION_FOR_PAYMENTS: bool = False
+
     # CORS
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
@@ -82,6 +104,28 @@ class Settings(BaseSettings):
             raise ValueError(
                 "CRITICAL SECURITY CONFIGURATION ERROR: "
                 "Production requires a strong WEBHOOK_SECRET of at least 32 characters."
+            )
+        return v
+
+    @field_validator("EMAIL_PROVIDER")
+    @classmethod
+    def validate_email_provider_in_production(cls, v: str, info) -> str:
+        env = info.data.get("APP_ENV")
+        if env == "production" and v == "console":
+            raise ValueError(
+                "CRITICAL SECURITY CONFIGURATION ERROR: "
+                "EMAIL_PROVIDER cannot be 'console' when APP_ENV is production."
+            )
+        return v
+
+    @field_validator("SMS_PROVIDER")
+    @classmethod
+    def validate_sms_provider_in_production(cls, v: str, info) -> str:
+        env = info.data.get("APP_ENV")
+        if env == "production" and v == "console":
+            raise ValueError(
+                "CRITICAL SECURITY CONFIGURATION ERROR: "
+                "SMS_PROVIDER cannot be 'console' when APP_ENV is production."
             )
         return v
 

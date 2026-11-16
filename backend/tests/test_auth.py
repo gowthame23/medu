@@ -194,3 +194,25 @@ def test_production_guards_against_insecure_secrets():
             SECRET_KEY="secure-prod-secret-key-minimum-32-chars-long",
             WEBHOOK_SECRET="dev-insecure-webhook-secret-2026"
         )
+
+    # Refuses to start in production with console EMAIL_PROVIDER
+    with pytest.raises(ValueError, match="EMAIL_PROVIDER cannot be 'console'"):
+        Settings(
+            APP_ENV="production",
+            ENABLE_SANDBOX_PAYMENTS=False,
+            SECRET_KEY="secure-prod-secret-key-minimum-32-chars-long",
+            WEBHOOK_SECRET="secure-prod-webhook-secret-min-32-chars-long",
+            EMAIL_PROVIDER="console",
+            SMS_PROVIDER="dummy"
+        )
+
+    # Refuses to start in production with console SMS_PROVIDER
+    with pytest.raises(ValueError, match="SMS_PROVIDER cannot be 'console'"):
+        Settings(
+            APP_ENV="production",
+            ENABLE_SANDBOX_PAYMENTS=False,
+            SECRET_KEY="secure-prod-secret-key-minimum-32-chars-long",
+            WEBHOOK_SECRET="secure-prod-webhook-secret-min-32-chars-long",
+            EMAIL_PROVIDER="smtp",
+            SMS_PROVIDER="console"
+        )
