@@ -139,24 +139,41 @@ npm run build
 # 5. Frontend Static Integrity Checks (Asserts zero parseFloat, strict CSP, required models)
 npm run test:static
 
-# 6. Real Playwright End-to-End User Journey (Register -> Login -> Dashboard -> Add Bill -> Pay via UPI -> Paid Attribution -> Logout)
+# 6. Real Playwright End-to-End User Journey (Register -> Verify Email -> Banner Dismissal -> Add Bill -> Pay via UPI -> Paid Attribution -> Logout)
 npm run test:e2e
 
-# 7. Docker Compose Config & Verification (Requires Docker engine installed)
+# 7. PostgreSQL End-to-End Suite & Concurrency Proof
+python scripts/verify_postgres.py
+
+# 8. Docker Compose Config & Verification (Requires Docker engine installed)
 docker compose config
 docker compose up --build
 ```
 
 ---
 
+## 🔐 Email & Phone Verification and Payment Gating
+
+Mend provides end-to-end verification workflows:
+- **Endpoints**: `/api/v1/verification/email/send`, `/api/v1/verification/email/confirm`, `/api/v1/verification/phone/send`, `/api/v1/verification/phone/confirm`.
+- **E.164 Normalization**: Bare 10-digit Indian numbers default to `+91`; whitespace and hyphens are stripped.
+- **Enumeration Safety**: Sends unconditionally return 202 Accepted. Uniqueness for verified phone numbers is enforced via partial unique index (`uq_verified_phone_e164`).
+- **Cryptographic Security**: 6-digit random codes from `secrets`, 10-minute TTL, constant-time comparison, 5 wrong attempts locks challenge.
+- **Rate Limits & Cooldowns**: 60s cooldown, max 5 sends/hour per user+channel tracked in DB, plus in-memory IP rate limiting.
+- **Outbox Encryption**: Sensitive verification dispatch payloads are encrypted with AES-256-GCM and wiped to `{}` immediately upon delivery.
+- **Payment Gating**: `REQUIRE_EMAIL_VERIFICATION_FOR_PAYMENTS=true` and `REQUIRE_PHONE_VERIFICATION_FOR_PAYMENTS=false`. Payments and mark-paid return 403 `EMAIL_NOT_VERIFIED` / `PHONE_NOT_VERIFIED` if unverified.
+- **Production Guard**: Startup fail-fast prevents running with `EMAIL_PROVIDER="console"` or `SMS_PROVIDER="console"` in production. Test helper endpoint returns 404 in production.
+
+---
+
 ## ⚠️ Known Limits & Verification Status
 
-- **PostgreSQL**: Verified locally against Windows PostgreSQL 16 on port 5432 with `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 34 tests including `test_postgres_concurrent_payment_race_condition` and clean Alembic upgrade from scratch (`0fa0163424e7` -> `a2551f055745`).
+- **PostgreSQL**: Verified locally against Windows PostgreSQL 16 on port 5432 with `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 59 tests including `test_postgres_concurrent_payment_race_condition`, `test_concurrent_confirm_race_condition`, and clean Alembic upgrade from scratch (`0fa0163424e7` -> `a2551f055745` -> `fccb551da8cb`).
+- **Live SMTP / SMS Gateways**: **NOT RUN** in automated CI/test suites because live third-party credentials (Gmail App Password, Twilio SID/token, MSG91 DLT) and external network egress are disabled in the test sandbox. Verified via `ConsoleEmailSender`, `ConsoleSmsSender`, `SmtpEmailSender` unit tests (verifying TLS enforcement, timeout, and plaintext rejection), and outbox publisher delivery with payload clearance and retry. A manual verification smoke test script is provided at `python scripts/smtp_smoke.py <recipient>`.
 - **Docker / Docker Compose**: **NOT RUN** locally because Docker Engine is not installed on this host environment. Dockerfile and `docker-compose.yml` are maintained and configured with unprivileged users (`menduser`), parameterized database credentials, and minimal production dependencies (`requirements.txt`).
 - **Rate Limiting**: Sliding-window rate limiter is currently in-process and per-worker memory with an LRU cap of 10,000 keys. Multi-worker deployments require Redis.
 - **Payment Gateway**: Payments are currently driven by a simulated sandbox provider (`ENABLE_SANDBOX_PAYMENTS=True`). No live NPCI UPI or BBPS endpoints are connected.
 - **Self-Reported Payments**: Marked as `PAID_UNVERIFIED` until external biller confirmation.
-- **Account Recovery**: No email verification tokens or SMTP delivery; no password reset flow. Authentication uses direct Argon2id credentials.
 
 ---
 

@@ -48,20 +48,52 @@ To eliminate IEEE-754 binary floating-point rounding errors and wealth drift:
 - **Bounded List Pagination**: All collection endpoints (`/notifications`, `/bills`, `/families/{id}/bills`, `/families/{id}/payments`, `/loans`) enforce bounded pagination with `limit` (default 50, maximum 200) and `offset` (default 0), and deterministic secondary tie-breaking ordering (`id`).
 
 ## 7. Audit Logging, HMAC Hashing & Privacy Redaction
-- **Comprehensive Lifecycle Audit Coverage**: Audit logging covers authentication events (`LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_CHANGED`), household management (`FAMILY_CREATED`, `FAMILY_INVITE_SENT`, `FAMILY_MEMBER_REMOVED`), bills (`BILL_CREATED`, `BILL_DELETED`, `BILL_MARKED_PAID`), payments (`PAYMENT_INTENT_CREATED`, `PAYMENT_CANCELLED`, `PAYMENT_SUCCESS`), and private liabilities (`LOAN_CREATED`, `LOAN_DELETED`).
-- **HMAC-Keyed Email Hashing**: Emails stored in audit logs are hashed using HMAC-SHA256 keyed with a secret derived from `SECRET_KEY` (`SECRET_KEY + ':audit_email_salt'`), preventing rainbow table and dictionary reversal attacks.
+- **Comprehensive Lifecycle Audit Coverage**: Audit logging covers authentication events (`LOGIN_SUCCESS`, `LOGIN_FAILED`, `LOGOUT`, `LOGOUT_ALL`, `PASSWORD_CHANGED`), household management (`FAMILY_CREATED`, `FAMILY_INVITE_SENT`, `FAMILY_MEMBER_REMOVED`), bills (`BILL_CREATED`, `BILL_DELETED`, `BILL_MARKED_PAID`), payments (`PAYMENT_INTENT_CREATED`, `PAYMENT_CANCELLED`, `PAYMENT_SUCCESS`), private liabilities (`LOAN_CREATED`, `LOAN_DELETED`), and verification lifecycle events (`VERIFICATION_SENT`, `VERIFICATION_CONFIRMED`, `VERIFICATION_FAILED`, `VERIFICATION_LOCKED`).
+- **HMAC-Keyed Hashing**: Sensitive targets in audit logs (emails and phone numbers) are hashed using HMAC-SHA256 keyed with secrets derived from `SECRET_KEY` (`SECRET_KEY + ':audit_email_salt'` and `SECRET_KEY + ':audit_phone_salt'`), preventing rainbow table and dictionary reversal attacks. Plaintext OTP codes, tokens, and phone numbers are strictly forbidden from audit logs.
 - **Zero-Debt Leakage in Audit Trails**: Loan audit entries record entity/user identifiers only (`metadata_json={}`). Loan names, principal amounts, interest rates, and remaining balances are never stored in audit logs, guaranteeing zero debt leakage even to compliance reviewers.
 - **Indexed Compliance Queries**: `audit_logs` table has dedicated indexes on `(created_at)` and `(user_id)` for performant timeline queries.
 
-## 8. Dependency Hygiene & Migration Discipline
-- **Pinned Dependencies**: `backend/requirements.txt` contains pinned production dependencies without test or build tooling. `backend/requirements-dev.txt` extends it with test runners and development utilities (`pytest`, `httpx`, `pytest-asyncio`). Production Docker images install strictly from `requirements.txt`.
-- **Forward-Only Schema Migrations**: Applied migrations (`0fa0163424e7_initial_schema.py` and `a2551f055745_add_audit_indexes_and_payment_event_id.py`) are immutable baselines and must never be edited. Schema changes strictly require new revision files. The test suite includes `test_alembic_upgrade_head_and_check_no_schema_drift` to assert zero schema drift.
+## 8. Email & Phone Verification and Payment Gating
+- **Verification Endpoints & Normalization**: Under `/api/v1/verification`:
+  - `POST /email/send` and `POST /email/confirm`
+  - `POST /phone/send` and `POST /phone/confirm`
+  - Phone normalization to standard E.164 (strips whitespace and dashes, defaults bare 10-digit numbers to `+91`, validates against `^\+[1-9]\d{7,14}$`).
+- **Security & Anti-Bruteforce**:
+  - 6-digit random codes generated from standard library `secrets`.
+  - 10-minute TTL per challenge.
+  - Constant-time code verification using `secrets.compare_digest`.
+  - 5 failed attempts locks the challenge, rendering the code unusable.
+  - Issuing a new challenge invalidates any prior active challenge for that `(user_id, channel)`.
+  - Rate limiting & cooldowns: 60-second resend cooldown and a maximum of 5 sends per hour per user+channel, counted in the database so rate limits survive server restarts, supplemented by an in-memory IP rate limiter (30 req/min).
+- **Enumeration Safety**:
+  - All `send` requests unconditionally return HTTP 202 Accepted with identical response bodies whether or not a code was actually dispatched (covering cooldown suppression, hourly cap, user already verified, or phone taken).
+  - If a phone is already verified by another user account, `POST /phone/send` returns generic 202 and dispatches nothing.
+  - Partial unique index on `phone_e164` where `phone_verified_at IS NOT NULL` enforced in PostgreSQL and SQLite (`uq_verified_phone_e164`).
+- **Outbox Delivery with AES-256-GCM Payload Encryption**:
+  - Verification codes are never stored in the database in plaintext.
+  - The challenge record stores `code_hash` (HMAC of code + challenge id).
+  - Outbox dispatch events (`VERIFICATION_EMAIL_DISPATCH`, `VERIFICATION_PHONE_DISPATCH`) encrypt the dispatch payload using AES-256-GCM with a 256-bit key derived from `SECRET_KEY`.
+  - Upon successful dispatch by the background publisher, the outbox payload is wiped to `{}` in the database.
+  - Failed dispatches retry with exponential backoff up to 5 attempts, recording class-level sanitized errors without leaking credentials.
+- **Row-Level Lock on Confirmation**:
+  - `POST /verification/*/confirm` locks the challenge row with `SELECT ... FOR UPDATE`, ensuring that two simultaneous confirmation requests of the same code result in exactly one HTTP 200 and one HTTP 400 (verified on PostgreSQL).
+- **Payment Gating Policy**:
+  - Gated by configurable settings: `REQUIRE_EMAIL_VERIFICATION_FOR_PAYMENTS=true` and `REQUIRE_PHONE_VERIFICATION_FOR_PAYMENTS=false`.
+  - When enabled and the user lacks verification, payment initiation (`POST /bills/{id}/pay`) and mark-paid (`POST /bills/{id}/mark-paid`) return HTTP 403 Forbidden with error codes `EMAIL_NOT_VERIFIED` or `PHONE_NOT_VERIFIED`.
+  - Account login, profile queries, daily logs, bills creation, and incoming payment webhooks remain completely ungated.
+- **Production Guards**:
+  - In production (`APP_ENV=production`), `EMAIL_PROVIDER="console"` and `SMS_PROVIDER="console"` are rejected at startup.
+  - The test-only helper endpoint `GET /api/v1/verification/test-last-code` is unconditionally disabled and returns HTTP 404 in production.
 
-## 9. Verification Status & Known Limits (v1)
-- **PostgreSQL**: Verified locally on Windows against PostgreSQL 16 on port 5432 using `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 30 tests including the concurrent payment race condition test (`test_postgres_concurrent_payment_race_condition`) and clean Alembic upgrade from scratch.
+## 9. Dependency Hygiene & Migration Discipline
+- **Pinned Dependencies**: `backend/requirements.txt` contains pinned production dependencies without test or build tooling. `backend/requirements-dev.txt` extends it with test runners and development utilities (`pytest`, `httpx`, `pytest-asyncio`). Production Docker images install strictly from `requirements.txt`.
+- **Forward-Only Schema Migrations**: Applied migrations (`0fa0163424e7_initial_schema.py`, `a2551f055745_add_audit_indexes_and_payment_event_id.py`, and `fccb551da8cb_add_verification_challenges_and_user_.py`) are immutable baselines and must never be edited. Schema changes strictly require new revision files. The test suite includes `test_alembic_upgrade_head_and_check_no_schema_drift` to assert zero schema drift across SQLite and PostgreSQL.
+
+## 10. Verification Status & Known Limits (v1)
+- **PostgreSQL**: Verified locally on Windows against PostgreSQL 16 on port 5432 using `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 59 tests including the concurrent payment race condition test (`test_postgres_concurrent_payment_race_condition`), the concurrent verification confirmation race test (`test_concurrent_confirm_race_condition`), and clean Alembic upgrade from scratch (`0fa0163424e7` -> `a2551f055745` -> `fccb551da8cb`).
+- **Live SMTP / SMS Gateways**: **NOT RUN** in automated CI/test suites because live third-party credentials (Gmail App Password, Twilio SID/token, MSG91 DLT) and external network egress are disabled in the test sandbox. Verified via `ConsoleEmailSender`, `ConsoleSmsSender`, `SmtpEmailSender` unit tests (verifying TLS enforcement, timeout, and plaintext rejection), and outbox publisher delivery with payload clearance and retry. A manual verification smoke test script is provided at `python scripts/smtp_smoke.py <recipient>`.
 - **Docker**: **NOT RUN** locally because Docker Engine is not installed on this host environment. Dockerfile and `docker-compose.yml` are maintained and configured with unprivileged users (`menduser`), parameterized database credentials, and minimal production dependencies (`requirements.txt`).
 - **Rate Limiting**: In-memory and per-process with an LRU cap of 10,000 keys. Multi-worker deployments require Redis-backed sliding windows.
 - **Payment Provider**: Sandbox simulated provider only (`ENABLE_SANDBOX_PAYMENTS=True` in dev/test). Production requires integration with real payment gateway APIs.
 - **Bill Fetching / BBPS**: Mock BBPS discovery engine only. No live NPCI BBPS or RBI Account Aggregator endpoints are connected.
 - **Self-Reported Payments**: Self-reported settlements (`PAID_UNVERIFIED`) are user claims and unverified by any external banking authority until reconciled.
-- **Account Recovery**: No email verification tokens, SMTP mailers, or password reset flows are present in v1. Authentication relies on direct Argon2id credentials.
