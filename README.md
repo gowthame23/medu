@@ -58,9 +58,57 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt
 
 # Run migrations (forward-only, baseline migrations immutable):
-python -m alembic upgrade head
+python -m alembic -c backend/alembic.ini upgrade head
 
 uvicorn app.main:app --reload --port 8000
+```
+
+### Migration Rule
+* **Forward-Only & Immutable**: Never edit an applied Alembic migration file in-place. Any schema evolution (tables, columns, indexes, constraints) must be authored as a new, forward-only revision:
+  ```bash
+  python -m alembic -c backend/alembic.ini revision -m "add_feature_column"
+  ```
+* **Zero Schema Drift**: Always verify there is no drift between SQLAlchemy models and database migrations:
+  ```bash
+  python -m alembic -c backend/alembic.ini check
+  ```
+
+---
+
+### Local PostgreSQL Setup & Verification (Without Docker)
+
+You can run and test against a real PostgreSQL instance locally without Docker:
+
+#### 1. Starting PostgreSQL
+* **Windows (portable binaries or installed service):**
+  ```powershell
+  # Using pg_ctl with a local data cluster (e.g., C:\Users\gowth\pgsql\data):
+  pg_ctl -D C:\Users\gowth\pgsql\data -l C:\Users\gowth\pgsql\logfile.log start
+
+  # Or if installed as a Windows service:
+  net start postgresql-x64-16
+  ```
+* **Linux / macOS:**
+  ```bash
+  # Linux systemd:
+  sudo systemctl start postgresql
+  # macOS Homebrew:
+  brew services start postgresql@16
+  ```
+
+#### 2. Running the Automated PostgreSQL Verification Script
+The repository provides `scripts/verify_postgres.py` to automate end-to-end PostgreSQL validation:
+1. Drops and recreates an isolated empty test database (`mend_empty_test`).
+2. Runs `alembic upgrade head` from baseline to verify transactional DDL.
+3. Runs `alembic check` ensuring zero model-to-database schema drift.
+4. Executes the full 34-test pytest suite with `TEST_DATABASE_URL` pointing to PostgreSQL (including the row-level `FOR UPDATE` concurrency race condition test).
+
+```bash
+# Default connection is postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test
+python scripts/verify_postgres.py
+
+# Or supply custom credentials:
+TEST_DATABASE_URL="postgresql+asyncpg://user:pass@127.0.0.1:5432/mend_test" python scripts/verify_postgres.py
 ```
 
 ### 2. Frontend (Next.js)
@@ -103,7 +151,7 @@ docker compose up --build
 
 ## ⚠️ Known Limits & Verification Status
 
-- **PostgreSQL**: Verified locally against Windows PostgreSQL 16 on port 5432 with `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 30 tests including `test_postgres_concurrent_payment_race_condition` and clean Alembic upgrade from scratch (`0fa0163424e7` -> `a2551f055745`).
+- **PostgreSQL**: Verified locally against Windows PostgreSQL 16 on port 5432 with `asyncpg` (`TEST_DATABASE_URL=postgresql+asyncpg://postgres@127.0.0.1:5432/mend_test`), passing all 34 tests including `test_postgres_concurrent_payment_race_condition` and clean Alembic upgrade from scratch (`0fa0163424e7` -> `a2551f055745`).
 - **Docker / Docker Compose**: **NOT RUN** locally because Docker Engine is not installed on this host environment. Dockerfile and `docker-compose.yml` are maintained and configured with unprivileged users (`menduser`), parameterized database credentials, and minimal production dependencies (`requirements.txt`).
 - **Rate Limiting**: Sliding-window rate limiter is currently in-process and per-worker memory with an LRU cap of 10,000 keys. Multi-worker deployments require Redis.
 - **Payment Gateway**: Payments are currently driven by a simulated sandbox provider (`ENABLE_SANDBOX_PAYMENTS=True`). No live NPCI UPI or BBPS endpoints are connected.
