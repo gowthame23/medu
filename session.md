@@ -373,3 +373,20 @@
   6. **Comprehensive Test Suite (Item 5)**:
      - Created `backend/tests/test_reminders.py` testing: local time slot triggers (10:00 and 18:00), cross-timezone differentiation (Tokyo vs New York), daylight saving time (DST) transitions, duplicate execution idempotency, log submission evening suppression, user setting disablement, invalid timezone fallback, and strict privacy/no-amounts assertions.
      - All 67 backend tests pass on SQLite and PostgreSQL. All frontend type checks and lint checks pass cleanly.
+
+## Session 18 — Portfolio Report Audit & Fact Alignment (2026-11-21)
+- **Objective**: Audit and align `sde/FINAL_REPORT.md` against the real Mend codebase architecture and verified facts.
+- **Audited Facts**:
+  - Confirmed backend endpoints reside in `backend/app/api/v1/` (`users.py`, `notifications.py`), not `backend/app/routers/`.
+  - Confirmed frontend lives in `src/` (`src/app/`, `src/components/`), not `frontend/`.
+  - Confirmed framework is Next.js 16.4.6 (`package.json`), not Next.js 14.
+  - Confirmed invalid timezone fallback is `Asia/Kolkata` (`backend/app/jobs/reminders.py`), not UTC.
+  - Confirmed frontend components are `src/components/ReminderBanner.tsx` and `src/components/ReminderSettingsModal.tsx`. Removed false claim of a standalone notifications page route.
+  - Confirmed `backend/tests/test_reminders.py` contains exactly 8 async test functions and `backend/app/jobs/scheduler.py` runs `daily_checkin_reminders` on a 15-minute interval (`minutes=15`).
+  - Confirmed `mend/REPORT.md` already contained 100% accurate information and did not require edits.
+- **Verification Run**:
+  - Executed `python -m pytest -q` from `mend/`:
+    `....................................s...............................     [100%]`
+    `67 passed, 1 skipped in 9.38s`
+- **Updated Portfolio Report**: Corrected "Project 1: mend" section in `sde/FINAL_REPORT.md` with verified facts and raw test summary.
+
