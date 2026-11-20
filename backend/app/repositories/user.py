@@ -55,13 +55,19 @@ class UserRepository:
         self,
         user_id: uuid.UUID,
         display_name: Optional[str] = None,
-        timezone: Optional[str] = None
+        timezone: Optional[str] = None,
+        reminder_morning_enabled: Optional[bool] = None,
+        reminder_evening_enabled: Optional[bool] = None
     ) -> Optional[User]:
         values = {}
         if display_name is not None:
             values["display_name"] = display_name
         if timezone is not None:
             values["timezone"] = timezone
+        if reminder_morning_enabled is not None:
+            values["reminder_morning_enabled"] = reminder_morning_enabled
+        if reminder_evening_enabled is not None:
+            values["reminder_evening_enabled"] = reminder_evening_enabled
         if values:
             stmt = update(User).where(User.id == user_id).values(**values)
             await self.db.execute(stmt)

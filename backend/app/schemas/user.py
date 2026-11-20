@@ -54,11 +54,15 @@ class UserResponse(StrictBaseModel):
     email_verified: bool = False
     phone_verified: bool = False
     phone_e164: Optional[str] = None
+    reminder_morning_enabled: bool = True
+    reminder_evening_enabled: bool = True
 
 
 class UserUpdateRequest(StrictBaseModel):
     display_name: Optional[str] = Field(None, min_length=1, max_length=100)
     timezone: Optional[str] = None
+    reminder_morning_enabled: Optional[bool] = None
+    reminder_evening_enabled: Optional[bool] = None
 
     @field_validator("timezone")
     @classmethod
@@ -66,3 +70,13 @@ class UserUpdateRequest(StrictBaseModel):
         if v is not None and v not in zoneinfo.available_timezones():
             raise ValueError(f"Invalid IANA timezone: '{v}'")
         return v
+
+
+class ReminderSettingsResponse(StrictBaseModel):
+    reminder_morning_enabled: bool
+    reminder_evening_enabled: bool
+
+
+class ReminderSettingsUpdateRequest(StrictBaseModel):
+    reminder_morning_enabled: Optional[bool] = None
+    reminder_evening_enabled: Optional[bool] = None

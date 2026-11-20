@@ -247,3 +247,52 @@ async def test_users_me_verification_status(client: AsyncClient, create_user_fix
     data2 = res2.json()
     assert data2["email_verified"] is True
     assert data2["phone_verified"] is False
+
+
+@pytest.mark.asyncio
+async def test_reminder_settings_endpoints(client: AsyncClient, create_user_fixture):
+    """Asserts that user reminder settings default to True, can be read and updated via /me and /me/reminders."""
+    user, token = await create_user_fixture("reminders_test@example.com", "Reminder Tester")
+    headers = {"Authorization": f"Bearer {token}", "Origin": "http://testserver"}
+
+    # 1. Defaults are True on GET /me and GET /me/reminders
+    res1 = await client.get("/api/v1/me", headers=headers)
+    assert res1.status_code == 200
+    data1 = res1.json()
+    assert data1["reminder_morning_enabled"] is True
+    assert data1["reminder_evening_enabled"] is True
+
+    res_rem1 = await client.get("/api/v1/me/reminders", headers=headers)
+    assert res_rem1.status_code == 200
+    assert res_rem1.json() == {
+        "reminder_morning_enabled": True,
+        "reminder_evening_enabled": True
+    }
+
+    # 2. Update via PATCH /me
+    res_patch = await client.patch("/api/v1/me", json={"reminder_morning_enabled": False}, headers=headers)
+    assert res_patch.status_code == 200
+    assert res_patch.json()["reminder_morning_enabled"] is False
+    assert res_patch.json()["reminder_evening_enabled"] is True
+
+    # 3. Update via PATCH /me/reminders
+    res_rem_patch = await client.patch(
+        "/api/v1/me/reminders",
+        json={"reminder_evening_enabled": False},
+        headers=headers
+    )
+    assert res_rem_patch.status_code == 200
+    assert res_rem_patch.json() == {
+        "reminder_morning_enabled": False,
+        "reminder_evening_enabled": False
+    }
+
+    # Verify persistence on subsequent GET /me
+    res_verify = await client.get("/api/v1/me", headers=headers)
+    assert res_verify.status_code == 200
+    assert res_verify.json()["reminder_morning_enabled"] is False
+    assert res_verify.json()["reminder_evening_enabled"] is False
+
+    # 4. Strict validation rejects non-boolean values
+    res_bad = await client.patch("/api/v1/me", json={"reminder_morning_enabled": "not_a_bool"}, headers=headers)
+    assert res_bad.status_code == 422
