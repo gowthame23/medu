@@ -66,11 +66,14 @@ share/python-wheels/
 *.egg
 MANIFEST
 venv/
+backend/venv/
 env/
 ENV/
 .env.local
 .env.*.local
 .pytest_cache/
 *.db
+mend.db
+backend/mend.db
 *.sqlite
 *.sqlite3
