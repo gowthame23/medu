@@ -34,6 +34,10 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     phone_e164: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     phone_verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Reminder settings (Round 8)
+    reminder_morning_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+    reminder_evening_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"), nullable=False)
+
     @property
     def email_verified(self) -> bool:
         return self.email_verified_at is not None

@@ -17,7 +17,8 @@ class NotificationRepository:
         type_str: str,
         title: str,
         message: str,
-        related_bill_id: Optional[uuid.UUID] = None
+        related_bill_id: Optional[uuid.UUID] = None,
+        dedupe_key: Optional[str] = None
     ) -> Notification:
         # Guarantee: No loan information in notification message
         notif = Notification(
@@ -26,6 +27,7 @@ class NotificationRepository:
             title=title,
             message=message,
             related_bill_id=related_bill_id,
+            dedupe_key=dedupe_key,
             is_read=False
         )
         self.db.add(notif)
