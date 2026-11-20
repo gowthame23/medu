@@ -12,6 +12,7 @@ import AddRadarModal from "@/components/AddRadarModal";
 import AddLoanModal from "@/components/AddLoanModal";
 import UPIIntentModal from "@/components/UPIIntentModal";
 import VerificationBanner from "@/components/VerificationBanner";
+import ReminderBanner from "@/components/ReminderBanner";
 import {
   api,
   BillRadarItem,
@@ -161,9 +162,16 @@ export default function Home() {
         user={user}
         familyGroupName={activeFamily ? activeFamily.group_name : "Household Hub"}
         onLogout={logout}
+        onRefreshUser={refreshUser}
       />
 
       <VerificationBanner user={user} onRefreshUser={refreshUser} />
+      <ReminderBanner
+        user={user}
+        onOpenCheckIn={() => setIsCheckInOpen(true)}
+        onReviewRadar={() => setActiveTab("dashboard")}
+        refreshTrigger={refreshTrigger}
+      />
 
       <main className="flex-1">
         {activeTab === "dashboard" ? (

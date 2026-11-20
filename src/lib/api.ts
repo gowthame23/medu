@@ -130,6 +130,20 @@ export interface UserProfile {
   email_verified: boolean;
   phone_verified: boolean;
   phone_e164?: string | null;
+  reminder_morning_enabled: boolean;
+  reminder_evening_enabled: boolean;
+}
+
+export interface NotificationItem {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  message: string;
+  related_bill_id?: string | null;
+  is_read: boolean;
+  read_at?: string | null;
+  created_at: string;
 }
 
 export interface Category {
@@ -457,5 +471,37 @@ export const api = {
       }),
     getTestLastCode: (channel: "email" | "phone" = "email") =>
       apiClient<{ code: string; channel: string }>(`/verification/test-last-code?channel=${channel}`),
+  },
+
+  notifications: {
+    list: (limit = 50, offset = 0) =>
+      apiClient<NotificationItem[]>(`/notifications?limit=${limit}&offset=${offset}`),
+    markRead: (id: string) =>
+      apiClient<void>(`/notifications/${id}/read`, { method: "PATCH" }),
+    markAllRead: () =>
+      apiClient<void>(`/notifications/read-all`, { method: "POST" }),
+  },
+
+  user: {
+    updateMe: (payload: {
+      display_name?: string;
+      timezone?: string;
+      reminder_morning_enabled?: boolean;
+      reminder_evening_enabled?: boolean;
+    }) =>
+      apiClient<UserProfile>("/me", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
+    getReminderSettings: () =>
+      apiClient<{ reminder_morning_enabled: boolean; reminder_evening_enabled: boolean }>("/me/reminders"),
+    updateReminderSettings: (payload: {
+      reminder_morning_enabled?: boolean;
+      reminder_evening_enabled?: boolean;
+    }) =>
+      apiClient<{ reminder_morning_enabled: boolean; reminder_evening_enabled: boolean }>("/me/reminders", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      }),
   },
 };
