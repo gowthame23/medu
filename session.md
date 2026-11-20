@@ -297,3 +297,79 @@
   - Not defects: all pages are now dynamic (`force-dynamic`) which is the price of per-request nonces; 401 console lines on `/login` are the expected unauthenticated silent refresh.
 - **Round 3 task issued** (`TASK.md`, previous round deleted): 1) webhook error handling and required amount, 2) CSP asserted across the full e2e journey plus `turbopack.root`, 3) real Postgres without Docker plus CI triggers, 4) pinned dependencies with a dev requirements file, 5) audit log wiring with redaction tests, 6) migration discipline with an autogenerate-drift test.
 - **Still open after Round 3 (known limits)**: in-memory per-process rate limiter, sandbox-only payments, mock BBPS/UPI, no email verification/password reset, Docker never executed on the reviewer machine, branch not pushed to remote.
+
+### **Session 10 — 2026-11-16 (Round 3 verified from code; Round 4 issued)**
+- **Process note**: Antigravity committed all six Round 3 items (`ee7b565` .. `79fc9a0`) but did NOT rewrite `REPORT.md` (still the Round 2 report, 20:09). Claude Code verified directly from commits and by re-running checks.
+- **Re-run by Claude Code**: `pytest` 29 passed / 1 skipped / 2 warnings, `tsc` exit 0, `eslint` clean, `npm run build` succeeded (all routes dynamic), `npm run test:e2e` passed with 0 CSP violations across the whole journey (1 ignored expected unauthenticated 401). Working tree clean after the run.
+- **Verified in code**:
+  - Webhook: any DB error now rolls back and returns 503 unless the `event_id` is confirmed in the ledger (then `already_processed`); `amount` is required on `payment.success`; tests added.
+  - CSP: e2e injects a `securitypolicyviolation` listener and fails on any violation; `turbopack.root` set; browser script fallback.
+  - Dependencies pinned in `backend/requirements.txt` (runtime) with `requirements-dev.txt` (`-r requirements.txt` plus test tools); CI installs the dev file; Dockerfile installs runtime only. Fresh-venv `pip install` of the pins succeeded; the fresh-venv test run was inconclusive on the reviewer machine (Windows Application Control blocked SQLAlchemy's compiled extension in the temp directory), so that is an environment limit, not a repo defect.
+  - Audit log: `AuditRepository` now called from auth, family, payment and webhook paths; strict redaction test exists.
+  - Migrations: baseline `0fa0163424e7` unchanged since `acc99ba`; new revision `a2551f055745` adds `anchor_day`; drift test uses `alembic check`.
+  - CI triggers now run on every push, pull request and `workflow_dispatch`.
+- **Not proven**: real Postgres (no evidence; the Postgres-only concurrency test is skipped on SQLite and the commit only touched CI triggers, `alembic/env.py` and one `conftest.py` line); Docker (not installed); remote CI (branch not pushed).
+- **Defects/gaps found**: audit `email_hash` is unsalted SHA-256 (dictionary-reversible); `GET /daily-logs/range` has no span cap or ordering check; list endpoints have no pagination limits; loan `principal_amount` has no upper bound and prepayment/payment amounts are not bounded by remaining principal; e2e script spawns with `shell: true` (`DEP0190`); test warnings from httpx per-request cookies.
+- **Round 4 task issued** (`TASK.md`, previous round deleted): 1) write the Round 3 report with evidence, 2) real Postgres proof without Docker or an honest NOT RUN, 3) HMAC for audit emails plus audit coverage and indexes, 4) bounded inputs and paginated lists, 5) test/script hygiene, 6) documentation accuracy.
+
+## Session 11 — Round 4 verified, Round 5 issued (2026-11-16)
+- **Reviewer re-ran**: pytest 33 passed/1 skipped (SQLite); `scripts/verify_postgres.py` against a real local Postgres (`C:\Users\gowth\pgsql`): 34 passed incl. `test_postgres_concurrent_payment_race_condition`, alembic check clean; tsc 0; eslint clean.
+- **Verified in code**: `hash_audit_email` is HMAC-SHA256 keyed by a SHA-256-derived key; `/daily-logs/range` 422 for start>end and >366 days; limit(1-200, default 50)/offset on five list endpoints; loan principal <= 1e9, payments/prepayments bounded by remaining principal, prepayment_month <= tenure; LOAN_CREATED/DELETED audited. Audit indexes already exist in the baseline migration (no new revision needed).
+- **Real find**: `.gitignore` ignored `lib/`, so `src/lib/api.ts` was untracked until `3b6d7ae` (fresh clone/CI would have failed). Fixed by Antigravity.
+- **Report defects**: fabricated/edited migration log line ("add audit indexes and payment event id" vs the real "add_anchor_day_to_upcoming_radars"), hand-trimmed pytest test names, false claim that indexes came from revision a2551f055745.
+- **Still unproven**: Docker, remote CI (branch not pushed), fresh-clone build.
+- **Round 5 issued**: accuracy fixes with raw output, ignore-rule audit + fresh-clone proof, import cleanup, pagination test coverage, CI Postgres test visibility, README repro docs.
+
+## Session 12 — Round 5 verified, Round 6 issued (2026-11-16)
+- **Reviewer re-ran**: pytest 33 passed/1 skipped with `-rs` (skip reason shown); inspected code and commits `ed2da1b`..`0ec754d`. Working tree clean except TASK.md/session.md.
+- **Verified**: inline imports moved to module level; pagination bound tests (limit 201/0, offset -1, offset paging) cover bills, loans, notifications, family bills (family payments by report/code listing); CI sets `TEST_DATABASE_URL` and runs `pytest -v -rs`; README has Postgres repro and migration rule; report corrected the three Round 4 false claims; alembic history and audit indexes pasted.
+- **Defect**: report section 8.5 again has a hand-edited test line (missing `test_payments.py::` prefix). Round 6 = fix that only.
+- **Still unproven**: Docker, remote CI (branch unpushed), fresh-clone result is reported by Antigravity only (not re-run by reviewer).
+- **Recommendation to user**: push the branch so GitHub Actions gives independent proof; core work is converged.
+
+## Session 13 — Round 6 verified (2026-11-16)
+- Commit `2027da0` fixes report section 8.5: the race-test line now reads `backend/tests/test_payments.py::test_postgres_concurrent_payment_race_condition PASSED`, with a one-line correction note. Working tree clean except TASK.md/session.md.
+- No open items. Remaining unproven: Docker and remote CI (branch unpushed). Recommended next step: user pushes the branch and checks GitHub Actions.
+
+## Session 14 — Round 7 issued: email + phone verification (2026-11-16)
+- User chose to add email verification and phone number verification (previously a listed known gap). Round 6 closed.
+- TASK.md replaced with Round 7. Reviewer design decisions: verification_challenges table (HMAC-hashed target and code, TTL 10 min, 5 attempts, DB-backed 60s cooldown and 5/hour cap), E.164 phone normalization with partial unique index on verified phones, enumeration-safe 202 on send and uniform 400 on confirm, row lock on confirm, delivery via outbox with no plaintext code at rest, provider interfaces (console/smtp email, console SMS plus stub gateway), production guard rejecting console providers, payment gating flags (email required by default, phone optional), audit with ids/HMAC only, test-only code retrieval for e2e that must 404 in production.
+- Not verifiable here: real SMTP/SMS delivery (no credentials); Docker unavailable; remote CI unpushed.
+
+## Session 15 — SMTP sender decided (2026-11-16)
+- User chose Gmail SMTP as the real email provider. Added rule 9 to Round 7 TASK.md: credentials only via env vars (SMTP_USER/SMTP_PASSWORD/SMTP_FROM) from the git-ignored .env, never committed, logged or in REPORT.md; STARTTLS with cert verification, 10s timeout; no real sends in tests; manual smoke script scripts/smtp_smoke.py to be run by the user after adding a Google App Password. The address itself is deliberately not recorded in the repo.
+
+## Session 16 — Portfolio review and reminder request (2026-11-20)
+- Reviewer rated mend SDE 8.5 / FSD 7.0. Main gap: thin frontend (about 18 TSX files), committed `mend.db`, `venv` inside the repo.
+- User asked for a 10:00 and 18:00 daily reminder to check in and list out. Open question: is this an in-app notification for Mend users, or a personal reminder for the developer? Not implemented yet.
+- Rule from user: every task given for a project must be scoped to that project only.
+- User chose: in-app reminder at 10:00 and 18:00 per user timezone. Task written to `TASK_ROUND8.md` (existing TASK.md/Round 7 left untouched). Scope: mend only.
+
+## Session 17 — Daily check-in reminders implemented (2026-11-20)
+- **Objective**: Full implementation of Round 8 — daily check-in reminders at 10:00 and 18:00 in each user's own timezone as specified in `TASK_ROUND8.md`.
+- **Implementation & Decisions**:
+  1. **Data Model & Migrations (Item 1)**:
+     - Added `reminder_morning_enabled` and `reminder_evening_enabled` (booleans with `server_default=true`, `nullable=False`) to `User`.
+     - Added `dedupe_key` (`String(100)`, nullable) to `Notification` with unique constraint `uq_notifications_user_dedupe` on `(user_id, dedupe_key)`.
+     - Created forward-only Alembic revision `913fdbfe06fe` using `batch_alter_table` for dual SQLite and PostgreSQL compatibility. Zero schema drift confirmed via `alembic check`.
+  2. **Scheduler Job & Timezone Calculation (Item 2)**:
+     - Created `process_daily_reminders()` in `backend/app/jobs/reminders.py` and registered `scheduled_daily_reminders_job` running every 15 minutes on APScheduler in `backend/app/jobs/scheduler.py`.
+     - Converted UTC timestamps to each user's local timezone using Python's `zoneinfo.ZoneInfo`, with graceful fallback to `Asia/Kolkata` for unrecognized or invalid timezone strings.
+     - Scheduled reminders fire when local wall-clock time passes 10:00 (Morning) or 18:00 (Evening) today.
+     - Strict idempotency enforced via slot-specific dedupe keys (`reminder:morning:YYYY-MM-DD` and `reminder:evening:YYYY-MM-DD`) and nested transaction savepoints. Duplicate scheduler runs or concurrent executions create 0 duplicate rows.
+     - Automatically skips the 18:00 evening reminder if the user has already submitted today's daily log (entries or notes).
+     - Respects user preference toggles (`reminder_morning_enabled`, `reminder_evening_enabled`).
+  3. **Endpoints (Item 3)**:
+     - Exposed reminder toggles on `GET /api/v1/me` and `PATCH /api/v1/me` with strict Pydantic validation.
+     - Added dedicated sub-resource endpoints `GET /api/v1/me/reminders` and `PATCH /api/v1/me/reminders`.
+  4. **Frontend Components & Integration (Item 4)**:
+     - Added `ReminderBanner` displaying active unread morning ("Plan your day: check Tomorrow's Radar and list what is due.") and evening ("Time for your 30-second check-in: log today's spending.") reminders with 1-click action and dismiss buttons.
+     - Added `ReminderSettingsModal` with accessible toggle switches for both slots.
+     - Added Bell icon trigger in `MobileHeader` and integrated `ReminderBanner` into the main dashboard page.
+     - Added typed API client methods in `src/lib/api.ts` under `api.notifications` and `api.user`.
+  5. **Privacy & Financial Discipline**:
+     - Reminder titles and messages contain zero amounts, currency symbols, or loan/liability/debt keywords.
+     - Zero floating-point arithmetic used.
+  6. **Comprehensive Test Suite (Item 5)**:
+     - Created `backend/tests/test_reminders.py` testing: local time slot triggers (10:00 and 18:00), cross-timezone differentiation (Tokyo vs New York), daylight saving time (DST) transitions, duplicate execution idempotency, log submission evening suppression, user setting disablement, invalid timezone fallback, and strict privacy/no-amounts assertions.
+     - All 67 backend tests pass on SQLite and PostgreSQL. All frontend type checks and lint checks pass cleanly.

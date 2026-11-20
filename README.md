@@ -11,6 +11,7 @@ Mend is an anxiety-free household financial platform built with **Next.js (App R
 3. **Strict Dual-Account Privacy Boundary**: Complete mathematical and structural isolation between personal spaces and household hubs. Personal loans and liabilities are **100% private** and can never leak to family members.
 4. **Financial Precision**: Zero floating-point arithmetic. All monetary values are handled as fixed-point `Numeric(14, 2)` in PostgreSQL, Python `Decimal`, and strings end-to-end in TypeScript.
 5. **Robust Payment Integrity**: Multi-layered concurrency controls, partial unique indexes, client-scoped idempotency keys, payment cancellation, webhook signature verification, and event ledger deduplication.
+6. **Peaceful Check-in Reminders**: Twice-daily in-app reminders (10:00 morning & 18:00 evening) calculated in each user's own timezone via `zoneinfo`, with evening auto-suppression if today's check-in was already logged, idempotent database deduplication, and zero debt/amount shame in notification copy.
 
 ---
 
@@ -163,6 +164,20 @@ Mend provides end-to-end verification workflows:
 - **Outbox Encryption**: Sensitive verification dispatch payloads are encrypted with AES-256-GCM and wiped to `{}` immediately upon delivery.
 - **Payment Gating**: `REQUIRE_EMAIL_VERIFICATION_FOR_PAYMENTS=true` and `REQUIRE_PHONE_VERIFICATION_FOR_PAYMENTS=false`. Payments and mark-paid return 403 `EMAIL_NOT_VERIFIED` / `PHONE_NOT_VERIFIED` if unverified.
 - **Production Guard**: Startup fail-fast prevents running with `EMAIL_PROVIDER="console"` or `SMS_PROVIDER="console"` in production. Test helper endpoint returns 404 in production.
+
+---
+
+## ⏰ Daily Check-in Reminders (Round 8)
+
+Mend provides peaceful, non-intrusive in-app reminders to anchor daily mindfulness without financial dread:
+- **Morning Slot (10:00)**: `"Plan your day: check Tomorrow's Radar and list what is due."`
+- **Evening Slot (18:00)**: `"Time for your 30-second check-in: log today's spending."`
+- **User Timezone Computation**: Local time is computed using standard IANA timezones via Python `zoneinfo.ZoneInfo`, correctly handling Daylight Saving Time (DST) transitions with an automatic fallback to `Asia/Kolkata` for unrecognized strings.
+- **Idempotency & Deduplication**: Managed via composite unique constraint `uq_notifications_user_dedupe` on `(user_id, dedupe_key)` (`reminder:morning:YYYY-MM-DD` and `reminder:evening:YYYY-MM-DD`). Scheduler restarts or concurrent worker runs will never create duplicate notifications.
+- **Evening Auto-Skip**: The 18:00 evening check-in reminder is automatically skipped if the user has already submitted today's daily log (entries or notes).
+- **User Preference Controls**: Per-user flags `reminder_morning_enabled` and `reminder_evening_enabled` (defaulting to `true`) can be inspected and updated via `PATCH /api/v1/me` and `PATCH /api/v1/me/reminders`.
+- **Frontend Integration**: Active reminders appear as a calm `ReminderBanner` with 1-click action buttons ("Review Radar", "Check In Now") and dismiss controls, accompanied by a `ReminderSettingsModal` accessible from the top navigation bar.
+- **Privacy & Money Integrity**: Reminder copy strictly contains **zero** amounts, zero currency symbols, and zero loan/debt/liability information.
 
 ---
 
