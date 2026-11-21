@@ -83,4 +83,3 @@ backend/mend.db
 
 
 # Test suites and e2e scripts kept local only
-pytest.ini
