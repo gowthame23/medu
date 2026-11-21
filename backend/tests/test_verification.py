@@ -10,7 +10,10 @@ from sqlalchemy import select
 from app.models.verification import VerificationChallenge
 from app.models.audit import AuditLog
 from app.models.outbox import OutboxEvent
-from backend.tests.conftest import TestAsyncSessionLocal
+try:
+    from backend.tests.conftest import TestAsyncSessionLocal
+except ImportError:
+    from tests.conftest import TestAsyncSessionLocal
 
 
 @pytest.mark.asyncio
