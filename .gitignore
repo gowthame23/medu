@@ -77,3 +77,6 @@ mend.db
 backend/mend.db
 *.sqlite
 *.sqlite3
+
+# Local session notes
+/session.md
