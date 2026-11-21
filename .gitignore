@@ -83,6 +83,4 @@ backend/mend.db
 
 
 # Test suites and e2e scripts kept local only
-backend/tests/
 pytest.ini
-scripts/test_e2e.mjs
